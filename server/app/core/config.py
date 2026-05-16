@@ -32,10 +32,24 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7     # 1 week
 
-    # ── Anthropic (Claude) ───────────────────────────────────────────────────
+    # ── LLM Provider ─────────────────────────────────────────────────────────
+    # "ollama"  : 완전 무료, 로컬 실행 (기본값)
+    # "groq"    : 무료 클라우드 API (GROQ_API_KEY 필요, 속도 매우 빠름)
+    # "claude"  : Anthropic Claude (ANTHROPIC_API_KEY 필요, 유료)
+    LLM_PROVIDER: str = "ollama"
+
+    # Ollama 설정 (로컬 무료)
+    OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
+    OLLAMA_MODEL: str = "llama3.2"           # ollama run llama3.2
+
+    # Groq 설정 (무료 클라우드, console.groq.com에서 발급)
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.1-8b-instant"  # 또는 llama-3.3-70b-versatile
+
+    # Anthropic 설정 (유료, 선택사항)
     ANTHROPIC_API_KEY: str = ""
-    LLM_MODEL: str = "claude-sonnet-4-6"
-    # Maximum tokens for LLM reply — keep tight to stay under latency budget
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+
     LLM_MAX_TOKENS: int = 512
 
     # ── Recognition ──────────────────────────────────────────────────────────

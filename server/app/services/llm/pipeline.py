@@ -2,24 +2,18 @@
 LLM Conversation Pipeline
 ==========================
 
-Responsibilities
-----------------
-1.  Maintains per-session conversation history (stored in Redis, capped at 20 turns).
-2.  Builds a system prompt tailored to the current scenario and the user's
-    recent error patterns (personalised tutoring).
-3.  Calls Claude claude-sonnet-4-6 with prompt caching on the system prompt to cut
-    latency and cost on repeated turns.
-4.  Returns the assistant's Korean text and a list of AvatarCommand objects
-    derived from the text.
+지원 프로바이더 (LLM_PROVIDER 환경변수로 선택)
+-----------------------------------------------
+  ollama  : 완전 무료 로컬 실행 (기본값)
+              → brew install ollama && ollama run llama3.2
+  groq    : 무료 클라우드 API (console.groq.com 에서 키 발급)
+              → GROQ_API_KEY=gsk_... 설정
+  claude  : Anthropic Claude (유료, ANTHROPIC_API_KEY 필요)
 
-Latency budget contribution : ~800 ms (LLM API round-trip).
+Ollama와 Groq는 OpenAI 호환 API를 제공하므로
+openai Python SDK 하나로 두 프로바이더를 모두 처리합니다.
 
-Usage
------
-    pipeline = LLMPipeline(session_id="abc", scenario="greetings")
-    await pipeline.start()
-    response = await pipeline.chat("안녕하세요")
-    print(response.text, response.avatar_commands)
+지연시간 목표: < 800ms (LLM 응답)
 """
 
 from __future__ import annotations
@@ -28,47 +22,54 @@ import json
 import logging
 from typing import List, Optional
 
-import anthropic
-
 from app.core.config import get_settings
 from app.models.schemas.ws_messages import AvatarCommand, LLMResponse
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# ─────────────────────── system prompt ──────────────────────────
+# ─────────────────────── 시스템 프롬프트 ─────────────────────────
 
-_SYSTEM_PROMPT_BASE = """당신은 한국수어(KSL) 전문 튜터 AI입니다.
-사용자가 수어로 표현한 단어나 문장을 텍스트로 전달받으면, 자연스럽고 따뜻한 한국어로 대화를 이어갑니다.
+_SYSTEM_PROMPT_BASE = """You are a Korean Sign Language (KSL) tutor AI. IMPORTANT RULES:
+1. ALWAYS respond in Korean only. Never use English, Japanese, Chinese, or any other language.
+2. Keep responses to 1-2 sentences maximum.
+3. Be warm and encouraging toward the learner.
+4. If the user made a signing error, start your response with "(교정)".
 
-[역할과 원칙]
-- 수어 학습자를 격려하고, 틀린 동작은 부드럽게 교정합니다.
-- 응답은 간결하게 1~3문장 이내로 유지합니다 (아바타 수어 표현 시간 제한).
-- 수어로 표현 가능한 단어와 문장을 우선적으로 사용합니다.
-- 의료 환경(병원) 상황에 맞는 어휘를 활용합니다.
+Context: The user is practicing sign language for hospital/medical settings.
+Scenario: {scenario}
+Detail: {scenario_detail}
 
-[응답 형식]
-- 자연스러운 한국어 대화 응답만 출력합니다.
-- 영어나 특수기호는 사용하지 않습니다.
-- 사용자가 틀린 수어를 했을 경우 "(교정)" 접두어로 피드백을 제공합니다.
-
-[학습 시나리오: {scenario}]
-{scenario_detail}"""
+Remember: Korean responses ONLY. Short and clear."""
 
 _SCENARIO_DETAILS = {
     "free_talk": "자유 주제로 대화합니다. 사용자가 말하는 내용에 자연스럽게 반응하세요.",
     "greetings": "인사말과 자기소개 위주의 학습입니다. 안녕하세요, 감사합니다, 이름 등을 연습합니다.",
-    "hospital": "병원 환경에서 필요한 수어를 학습합니다. 아프다, 약, 의사, 간호사, 도와주세요 등을 집중합니다.",
-    "numbers": "숫자와 날짜 표현을 학습합니다.",
-    "emotions": "감정 표현 수어를 학습합니다. 좋아요, 슬프다, 화나다, 무섭다 등을 연습합니다.",
+    "hospital":  "병원 환경에서 필요한 수어를 학습합니다. 아프다, 약, 의사, 간호사, 도와주세요 등을 집중합니다.",
+    "numbers":   "숫자와 날짜 표현을 학습합니다.",
+    "emotions":  "감정 표현 수어를 학습합니다. 좋아요, 슬프다, 화나다, 무섭다 등을 연습합니다.",
+}
+
+# 항상 쓸 수 있는 내장 응답 (LLM이 없을 때 fallback)
+_MOCK_RESPONSES = {
+    "안녕하세요": "안녕하세요! 오늘도 수어 연습 잘 하고 있네요. 다음 단어를 해볼까요?",
+    "감사합니다": "천만에요! 감사 표현 수어가 정확해졌어요.",
+    "아프다":     "아픈 곳이 있나요? '아프다' 수어를 잘 표현했어요.",
+    "약":         "약이 필요하신가요? 간호사에게 말씀드릴게요.",
+    "의사":       "의사 선생님을 찾고 계신가요? 안내해 드릴게요.",
+    "간호사":     "간호사를 부를까요? 잘 표현하셨어요!",
+    "도와주세요": "도움이 필요하신가요? 도와드리겠습니다!",
+    "화장실":     "화장실은 복도 끝에 있어요. 수어 표현이 정확해요.",
+    "물":         "물이 필요하신가요? 잘 표현하셨어요.",
+    "괜찮아요":   "다행이에요! '괜찮아요' 수어를 잘 익히셨네요.",
 }
 
 
 class LLMPipeline:
-    """One instance per WebSocket session."""
+    """세션 하나당 인스턴스 하나. 프로바이더를 자동으로 선택합니다."""
 
-    MAX_HISTORY = 20    # turns kept in Redis
-    CACHE_TTL_S = 3600  # conversation history TTL (1 hour)
+    MAX_HISTORY = 20
+    CACHE_TTL_S = 3600
 
     def __init__(
         self,
@@ -79,38 +80,40 @@ class LLMPipeline:
         self._session_id = session_id
         self._scenario = scenario
         self._redis = redis
-        self._history: List[dict] = []   # in-memory mirror
-        self._client: Optional[anthropic.AsyncAnthropic] = None
-        self._error_context: List[str] = []   # recent sign errors for personalisation
+        self._history: List[dict] = []
+        self._error_context: List[str] = []
+        self._client = None
+        self._provider = settings.LLM_PROVIDER
 
     async def start(self) -> None:
-        if not settings.ANTHROPIC_API_KEY:
-            logger.warning("ANTHROPIC_API_KEY not set — LLM will use mock responses")
-            return
-        self._client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        # Restore history from Redis if session was interrupted
+        """프로바이더에 맞는 클라이언트를 초기화합니다."""
+        if self._provider == "ollama":
+            self._client = self._init_ollama()
+        elif self._provider == "groq":
+            self._client = self._init_groq()
+        elif self._provider == "claude":
+            self._client = self._init_claude()
+        else:
+            logger.warning("알 수 없는 LLM_PROVIDER='%s'. mock 응답을 사용합니다.", self._provider)
+            self._client = None
+
+        # Redis에서 대화 이력 복원
         if self._redis:
             raw = await self._redis.get(f"history:{self._session_id}")
             if raw:
                 self._history = json.loads(raw)
+
+        if self._client:
+            logger.info("LLM 프로바이더: %s", self._provider)
 
     async def chat(
         self,
         user_sign_text: str,
         error_hints: Optional[List[str]] = None,
     ) -> LLMResponse:
-        """
-        Send a recognised sign (as Korean text) to the LLM and get a response.
-
-        Parameters
-        ----------
-        user_sign_text : Korean word/sentence the user signed, e.g. "안녕하세요"
-        error_hints    : List of short error strings from the feedback engine,
-                         e.g. ["엄지 방향 틀림", "손목 각도 낮음"]
-        """
         if error_hints:
             self._error_context.extend(error_hints)
-            self._error_context = self._error_context[-5:]   # keep last 5
+            self._error_context = self._error_context[-5:]
 
         user_content = user_sign_text
         if error_hints:
@@ -122,36 +125,24 @@ class LLMPipeline:
             return self._mock_response(user_sign_text)
 
         system_prompt = self._build_system_prompt()
+        reply_text = ""
+        tokens = 0
 
         try:
-            response = await self._client.messages.create(
-                model=settings.LLM_MODEL,
-                max_tokens=settings.LLM_MAX_TOKENS,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        # Cache the system prompt — saves ~200 ms on subsequent turns
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=self._history[-self.MAX_HISTORY:],
-            )
+            if self._provider == "claude":
+                reply_text, tokens = await self._chat_claude(system_prompt)
+            else:
+                # Ollama, Groq 모두 OpenAI 호환 API
+                reply_text, tokens = await self._chat_openai_compat(system_prompt)
+        except Exception as e:
+            logger.error("LLM 호출 실패 (%s): %s", self._provider, e)
+            return self._mock_response(user_sign_text)
 
-            reply_text = response.content[0].text.strip()
-            tokens = (
-                response.usage.input_tokens + response.usage.output_tokens
-                if hasattr(response, "usage")
-                else 0
-            )
-        except anthropic.APIError as e:
-            logger.error("Anthropic API error: %s", e)
-            reply_text = "죄송합니다. 잠시 후 다시 시도해주세요."
-            tokens = 0
+        if not reply_text:
+            return self._mock_response(user_sign_text)
 
         self._history.append({"role": "assistant", "content": reply_text})
 
-        # Persist to Redis
         if self._redis:
             await self._redis.setex(
                 f"history:{self._session_id}",
@@ -160,19 +151,112 @@ class LLMPipeline:
             )
 
         from app.services.avatar.controller import AvatarController
-        avatar_commands = AvatarController.text_to_commands(reply_text)
-
         return LLMResponse(
             text=reply_text,
-            avatar_commands=avatar_commands,
+            avatar_commands=AvatarController.text_to_commands(reply_text),
             tokens_used=tokens,
         )
 
     async def stop(self) -> None:
-        if self._client:
+        if self._client and hasattr(self._client, "close"):
             await self._client.close()
 
-    # ─────────────────────── helpers ────────────────────────────
+    # ─────────────── 프로바이더별 초기화 ─────────────────────────
+
+    def _init_ollama(self):
+        """
+        Ollama 로컬 서버에 연결합니다.
+        사전 준비:
+          brew install ollama        # macOS
+          ollama run llama3.2        # 첫 실행 시 모델 다운로드 (~2GB)
+        """
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                base_url=settings.OLLAMA_BASE_URL,
+                api_key="ollama",          # Ollama는 키 불필요 — 아무 문자열
+            )
+            logger.info("Ollama 클라이언트 초기화 완료 (base_url=%s, model=%s)",
+                        settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
+            return client
+        except ImportError:
+            logger.error("openai 패키지가 없습니다. pip install openai")
+            return None
+
+    def _init_groq(self):
+        """
+        Groq 무료 클라우드 API를 사용합니다.
+        사전 준비:
+          1. https://console.groq.com 에서 무료 계정 생성
+          2. API 키 발급 (gsk_...)
+          3. .env 에 GROQ_API_KEY=gsk_... 추가
+        """
+        if not settings.GROQ_API_KEY:
+            logger.warning("GROQ_API_KEY가 없습니다. mock 응답으로 대체합니다.")
+            return None
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=settings.GROQ_API_KEY,
+            )
+            logger.info("Groq 클라이언트 초기화 완료 (model=%s)", settings.GROQ_MODEL)
+            return client
+        except ImportError:
+            logger.error("openai 패키지가 없습니다. pip install openai")
+            return None
+
+    def _init_claude(self):
+        if not settings.ANTHROPIC_API_KEY:
+            logger.warning("ANTHROPIC_API_KEY가 없습니다. mock 응답으로 대체합니다.")
+            return None
+        try:
+            import anthropic
+            return anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        except ImportError:
+            logger.error("anthropic 패키지가 없습니다. pip install anthropic")
+            return None
+
+    # ─────────────── 프로바이더별 채팅 호출 ──────────────────────
+
+    async def _chat_openai_compat(self, system_prompt: str):
+        """Ollama & Groq 공통 호출 (OpenAI SDK)."""
+        model = (
+            settings.GROQ_MODEL if self._provider == "groq"
+            else settings.OLLAMA_MODEL
+        )
+        messages = [{"role": "system", "content": system_prompt}]
+        messages += self._history[-self.MAX_HISTORY:]
+
+        response = await self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=settings.LLM_MAX_TOKENS,
+            temperature=0.7,
+        )
+        text = response.choices[0].message.content.strip()
+        tokens = (
+            response.usage.total_tokens
+            if response.usage else 0
+        )
+        return text, tokens
+
+    async def _chat_claude(self, system_prompt: str):
+        """Anthropic Claude 호출."""
+        response = await self._client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=settings.LLM_MAX_TOKENS,
+            system=system_prompt,
+            messages=self._history[-self.MAX_HISTORY:],
+        )
+        text = response.content[0].text.strip()
+        tokens = (
+            response.usage.input_tokens + response.usage.output_tokens
+            if hasattr(response, "usage") else 0
+        )
+        return text, tokens
+
+    # ─────────────── 공통 유틸 ────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
         detail = _SCENARIO_DETAILS.get(self._scenario, _SCENARIO_DETAILS["hospital"])
@@ -188,16 +272,11 @@ class LLMPipeline:
         return prompt
 
     def _mock_response(self, user_text: str) -> LLMResponse:
-        """Used when no API key is configured."""
-        responses = {
-            "안녕하세요": "안녕하세요! 오늘도 수어 연습 잘 하고 있네요. 다음 단어를 해볼까요?",
-            "감사합니다": "천만에요! 감사 표현 수어가 정확해졌어요.",
-            "아프다": "아픈 곳이 있나요? '아프다' 수어를 잘 표현했어요.",
-            "약": "약이 필요하신가요? 간호사에게 말씀드릴게요.",
-            "의사": "의사 선생님을 찾고 계신가요? 안내해 드릴게요.",
-            "도와주세요": "도움이 필요하신가요? 도와드리겠습니다!",
-        }
-        text = responses.get(user_text, f"'{user_text}' 수어를 잘 표현했어요. 계속 연습해보세요!")
+        """LLM 없을 때 내장 응답 사용."""
+        text = _MOCK_RESPONSES.get(
+            user_text,
+            f"'{user_text}' 수어를 잘 표현했어요. 계속 연습해보세요!",
+        )
         from app.services.avatar.controller import AvatarController
         return LLMResponse(
             text=text,

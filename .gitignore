@@ -53,3 +53,4 @@ firmware/esp32/managed_components/
 # Secrets
 *.pem
 *.key
+server/ml/models/*.task

@@ -10,6 +10,7 @@ pydantic-settings==2.5.2
 
 # ── Database ──────────────────────────────────────────────────────
 sqlalchemy==2.0.36
+greenlet==3.1.1              # SQLAlchemy async 필수
 aiosqlite==0.20.0            # SQLite async driver (dev)
 asyncpg==0.30.0              # PostgreSQL async driver (prod)
 alembic==1.13.3              # DB migrations
@@ -18,15 +19,18 @@ alembic==1.13.3              # DB migrations
 redis[asyncio]==5.1.1
 
 # ── Vision ────────────────────────────────────────────────────────
-mediapipe==0.10.14
+mediapipe==0.10.35
 opencv-python-headless==4.10.0.84
 
 # ── ML inference ─────────────────────────────────────────────────
-onnxruntime==1.19.2
+onnxruntime==1.26.0
 numpy==1.26.4
 
 # ── LLM ───────────────────────────────────────────────────────────
-anthropic==0.34.2
+# Ollama(무료 로컬) & Groq(무료 클라우드) 모두 OpenAI 호환 API 사용
+openai==1.51.2
+# Claude를 쓰려면 아래 주석 해제
+# anthropic==0.34.2
 
 # ── Auth ──────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
