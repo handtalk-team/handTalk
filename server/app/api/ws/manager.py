@@ -21,8 +21,10 @@ class ConnectionManager:
         # session_id → set of websockets (supports multiple tabs)
         self._sessions: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-    async def connect(self, ws: WebSocket, session_id: str) -> None:
+    async def accept(self, ws: WebSocket) -> None:
         await ws.accept()
+
+    async def connect(self, ws: WebSocket, session_id: str) -> None:
         self._sessions[session_id].add(ws)
         logger.info("WS connected   session=%s  total=%d", session_id, self.total)
 

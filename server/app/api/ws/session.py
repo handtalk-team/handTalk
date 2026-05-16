@@ -89,6 +89,7 @@ class SessionHandler:
         self._session_id = temp_id
 
         try:
+            await manager.accept(self._ws)
             await self._send(SystemMessage(
                 level="info",
                 message="연결되었습니다. 세션을 시작하려면 start_session 메시지를 보내주세요.",

@@ -15,7 +15,7 @@
  */
 
 import { GloveMock } from './glove_mock.js';
-import { CameraCapture } from './camera.js';
+import { CameraCapture } from './camera.js?v=2';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js';
 
@@ -133,6 +133,11 @@ document.getElementById('btnEnd').addEventListener('click', () => {
 // ─── boot ──────────────────────────────────────────────────────
 (async () => {
   glove.start();
-  await camera.start();
-  ws.connect();
+  ws.connect();  // WebSocket은 카메라와 무관하게 먼저 연결
+  try {
+    await camera.start();
+  } catch (err) {
+    console.warn('카메라 초기화 실패:', err);
+    ui.addSystemMsg('카메라를 시작할 수 없습니다. 카메라 권한을 확인하세요.', 'warning');
+  }
 })();

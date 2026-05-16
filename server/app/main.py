@@ -58,7 +58,7 @@ app.include_router(feedback_router, prefix="/api/v1")
 
 # ── Serve web client static files ────────────────────────────────
 import os
-client_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "client")
+client_dir = os.path.join(os.path.dirname(__file__), "..", "..", "client")
 if os.path.isdir(client_dir):
     app.mount("/app", StaticFiles(directory=client_dir, html=True), name="client")
 

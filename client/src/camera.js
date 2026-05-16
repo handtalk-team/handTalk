@@ -55,7 +55,7 @@ export class CameraCapture {
         `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
     });
     this.#hands.setOptions({
-      maxNumHands: 1,
+      maxNumHands: 2,
       modelComplexity: 1,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -88,18 +88,20 @@ export class CameraCapture {
     let visionData = null;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const lms  = results.multiHandLandmarks[0];
-      const wlms = results.multiHandWorldLandmarks?.[0] ?? lms;
-      const hand = results.multiHandedness?.[0]?.label ?? 'Right';
-      const conf = results.multiHandedness?.[0]?.score  ?? 0.9;
+      // Draw all detected hands
+      results.multiHandLandmarks.forEach((lms, i) => {
+        const color = i === 0 ? '#7c6af7' : '#f59e0b';
+        drawConnectors(this.#ctx, lms, HAND_CONNECTIONS, { color, lineWidth: 2 });
+        drawLandmarks(this.#ctx, lms, { color, lineWidth: 1, radius: 3 });
+      });
 
-      // Draw skeleton overlay
-      drawConnectors(this.#ctx, lms, HAND_CONNECTIONS, {
-        color: '#7c6af7', lineWidth: 2,
-      });
-      drawLandmarks(this.#ctx, lms, {
-        color: '#a78bfa', lineWidth: 1, radius: 3,
-      });
+      // Send the most confident hand to the server (or right hand preferred)
+      const idx = results.multiHandedness?.findIndex(h => h.label === 'Right') ?? 0;
+      const best = Math.max(0, idx);
+      const lms  = results.multiHandLandmarks[best];
+      const wlms = results.multiHandWorldLandmarks?.[best] ?? lms;
+      const hand = results.multiHandedness?.[best]?.label ?? 'Right';
+      const conf = results.multiHandedness?.[best]?.score ?? 0.9;
 
       visionData = {
         landmarks:       lms.map(p => ({ x: p.x, y: p.y, z: p.z })),

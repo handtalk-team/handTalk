@@ -18,14 +18,20 @@ settings = get_settings()
 _redis: Optional[aioredis.Redis] = None
 
 
-async def get_redis() -> aioredis.Redis:
+async def get_redis() -> Optional[aioredis.Redis]:
     global _redis
     if _redis is None:
-        _redis = await aioredis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-        )
+        try:
+            client = await aioredis.from_url(
+                settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_connect_timeout=1,
+            )
+            await client.ping()
+            _redis = client
+        except Exception:
+            return None
     return _redis
 
 
