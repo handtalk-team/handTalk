@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>handTalk — AI 수어 튜터</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f1117;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 12px 24px;
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; color: #7c6af7; }
+    .badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .badge-mock { background: #3d2b00; color: #f59e0b; }
+    .badge-live { background: #0d2b1a; color: #34d399; }
+    .badge-dis  { background: #2d1b1b; color: #f87171; }
+
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 360px 1fr 320px;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* ── Left: Camera + Glove ── */
+    .panel-left {
+      background: #13151f;
+      border-right: 1px solid #2d3148;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .cam-box { position: relative; }
+    #videoEl {
+      width: 100%;
+      border-radius: 10px;
+      background: #000;
+      display: block;
+    }
+    #canvasEl {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 10px;
+    }
+
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    /* Glove visualiser */
+    .glove-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+    }
+    .finger-bar {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.65rem;
+      color: #9ca3af;
+    }
+    .finger-track {
+      width: 100%;
+      height: 70px;
+      background: #1e2030;
+      border-radius: 6px;
+      position: relative;
+      overflow: hidden;
+    }
+    .finger-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0; right: 0;
+      background: linear-gradient(to top, #7c6af7, #a78bfa);
+      transition: height 0.05s ease;
+      border-radius: 6px;
+    }
+
+    .imu-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .imu-chip {
+      background: #1e2030;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.7rem;
+      flex: 1;
+      min-width: 80px;
+    }
+    .imu-label { color: #6b7280; }
+    .imu-val { color: #a5b4fc; font-weight: 600; font-size: 0.75rem; }
+
+    /* Confidence bars */
+    .conf-row { display: flex; flex-direction: column; gap: 6px; }
+    .conf-item { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
+    .conf-label { width: 48px; color: #9ca3af; }
+    .conf-bar-bg {
+      flex: 1; height: 8px; background: #1e2030; border-radius: 99px; overflow: hidden;
+    }
+    .conf-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.1s ease;
+    }
+    .conf-vision .conf-bar-fill { background: #06b6d4; }
+    .conf-glove  .conf-bar-fill { background: #7c6af7; }
+    .conf-val { width: 32px; text-align: right; color: #e2e8f0; font-weight: 600; }
+
+    /* ── Centre: Conversation ── */
+    .panel-center {
+      display: flex;
+      flex-direction: column;
+      padding: 16px 20px;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    #chatBox {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 4px;
+    }
+    .msg {
+      max-width: 75%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+    .msg-user { align-self: flex-end; background: #3730a3; color: #e0e7ff; border-bottom-right-radius: 4px; }
+    .msg-ai   { align-self: flex-start; background: #1e2030; color: #e2e8f0; border-bottom-left-radius: 4px; }
+    .msg-sys  { align-self: center; background: #1a1d27; color: #6b7280; font-size: 0.78rem; padding: 4px 12px; }
+    .msg-partial { opacity: 0.6; font-style: italic; }
+
+    .ctrl-row {
+      display: flex;
+      gap: 10px;
+    }
+    select {
+      background: #1e2030;
+      color: #e2e8f0;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    button {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    #btnStart { background: #7c6af7; color: #fff; }
+    #btnEnd   { background: #374151; color: #e2e8f0; }
+
+    /* ── Right: Feedback + Stats ── */
+    .panel-right {
+      background: #13151f;
+      border-left: 1px solid #2d3148;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .stat-card {
+      background: #1e2030;
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+    .stat-card .val {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #7c6af7;
+      line-height: 1;
+    }
+    .stat-card .lbl {
+      font-size: 0.7rem;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    #feedbackLog {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .fb-card {
+      background: #1e2030;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.8rem;
+      animation: fadeIn 0.2s ease;
+    }
+    .fb-card .fb-sign { font-weight: 700; color: #a5b4fc; margin-bottom: 4px; }
+    .fb-error { color: #fca5a5; margin: 2px 0; }
+    .fb-tip   { color: #86efac; margin: 2px 0; }
+    .fb-dtw   { color: #6b7280; font-size: 0.72rem; margin-top: 4px; }
+
+    /* Latency chip */
+    #latencyChip {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      background: #1e2030;
+      border: 1px solid #374151;
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 0.72rem;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>✋ handTalk</h1>
+  <span id="gloveBadge" class="badge badge-mock">글러브: 시뮬레이션</span>
+  <span id="wsBadge"    class="badge badge-dis">서버: 연결 중</span>
+</header>
+
+<main>
+  <!-- ── Left panel ── -->
+  <div class="panel-left">
+    <div class="cam-box">
+      <video id="videoEl" autoplay muted playsinline></video>
+      <canvas id="canvasEl"></canvas>
+    </div>
+
+    <div>
+      <div class="section-title">글러브 센서 (Flex)</div>
+      <div class="glove-grid">
+        <div class="finger-bar">
+          <div class="finger-track"><div class="finger-fill" id="f0"></div></div>
+          <span>엄지</span>
+        </div>
+        <div class="finger-bar">
+          <div class="finger-track"><div class="finger-fill" id="f1"></div></div>
+          <span>검지</span>
+        </div>
+        <div class="finger-bar">
+          <div class="finger-track"><div class="finger-fill" id="f2"></div></div>
+          <span>중지</span>
+        </div>
+        <div class="finger-bar">
+          <div class="finger-track"><div class="finger-fill" id="f3"></div></div>
+          <span>약지</span>
+        </div>
+        <div class="finger-bar">
+          <div class="finger-track"><div class="finger-fill" id="f4"></div></div>
+          <span>새끼</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">IMU (가속도 / 자이로)</div>
+      <div class="imu-row">
+        <div class="imu-chip">
+          <div class="imu-label">Accel X</div>
+          <div class="imu-val" id="ax">0.00</div>
+        </div>
+        <div class="imu-chip">
+          <div class="imu-label">Accel Y</div>
+          <div class="imu-val" id="ay">0.00</div>
+        </div>
+        <div class="imu-chip">
+          <div class="imu-label">Accel Z</div>
+          <div class="imu-val" id="az">9.81</div>
+        </div>
+      </div>
+      <div class="imu-row" style="margin-top:6px">
+        <div class="imu-chip">
+          <div class="imu-label">Gyro X</div>
+          <div class="imu-val" id="gx">0.000</div>
+        </div>
+        <div class="imu-chip">
+          <div class="imu-label">Gyro Y</div>
+          <div class="imu-val" id="gy">0.000</div>
+        </div>
+        <div class="imu-chip">
+          <div class="imu-label">Gyro Z</div>
+          <div class="imu-val" id="gz">0.000</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">모달 신뢰도</div>
+      <div class="conf-row">
+        <div class="conf-item conf-vision">
+          <span class="conf-label">비전</span>
+          <div class="conf-bar-bg"><div class="conf-bar-fill" id="confVisionBar" style="width:0%"></div></div>
+          <span class="conf-val" id="confVisionVal">0%</span>
+        </div>
+        <div class="conf-item conf-glove">
+          <span class="conf-label">글러브</span>
+          <div class="conf-bar-bg"><div class="conf-bar-fill" id="confGloveBar" style="width:100%"></div></div>
+          <span class="conf-val" id="confGloveVal">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Centre panel ── -->
+  <div class="panel-center">
+    <div class="ctrl-row">
+      <select id="scenarioSel">
+        <option value="hospital">🏥 병원 (MVP)</option>
+        <option value="greetings">👋 인사말</option>
+        <option value="free_talk">💬 자유 대화</option>
+        <option value="emotions">😊 감정 표현</option>
+      </select>
+      <button id="btnStart">세션 시작</button>
+      <button id="btnEnd" disabled>세션 종료</button>
+    </div>
+    <div id="chatBox">
+      <div class="msg msg-sys">서버에 연결한 뒤 "세션 시작"을 누르세요.</div>
+    </div>
+  </div>
+
+  <!-- ── Right panel ── -->
+  <div class="panel-right">
+    <div>
+      <div class="section-title">세션 통계</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="val" id="statTotal">0</div>
+          <div class="lbl">전체 수어</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" id="statAcc">—</div>
+          <div class="lbl">인식 정확도</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" id="statLatency">—</div>
+          <div class="lbl">평균 지연(ms)</div>
+        </div>
+        <div class="stat-card">
+          <div class="val" id="statFPS">0</div>
+          <div class="lbl">카메라 FPS</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">실시간 피드백</div>
+      <div id="feedbackLog"></div>
+    </div>
+  </div>
+</main>
+
+<div id="latencyChip">⏱ — ms</div>
+
+<!-- MediaPipe Hands (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
