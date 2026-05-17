@@ -14,7 +14,7 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=2';
+import { CameraCapture } from './camera.js?v=3';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js';
 
