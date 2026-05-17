@@ -43,20 +43,11 @@ settings = get_settings()
 
 SIGN_VOCAB: Dict[int, str] = {
     0: "안녕하세요",
-    1: "감사합니다",
-    2: "아프다",
-    3: "약",
-    4: "의사",
-    5: "간호사",
-    6: "도와주세요",
-    7: "화장실",
-    8: "물",
-    9: "괜찮아요",
-    10: "좋아요",
-    11: "브이",
+    1: "좋아요",
+    2: "브이",
 }
 
-NUM_CLASSES = 10  # ONNX model trained on 10 classes (0-9)
+NUM_CLASSES = len(SIGN_VOCAB)
 
 
 class _GestureState(Enum):
@@ -142,18 +133,21 @@ class HybridRecognitionEngine:
 
     # ─────────────────────── inference ──────────────────────────
 
-    def _infer(self, partial: bool, ff: FusedFrame) -> RecognitionResult:
+    def _infer(self, partial: bool, ff: FusedFrame) -> Optional[RecognitionResult]:
         window = self._fusion.get_window_array()
 
+        result: Optional[Tuple[str, float]] = None
         if window is not None and self._onnx_session is not None:
-            label, confidence = self._onnx_infer(window)
+            result = self._onnx_infer(window)
         elif window is not None and self._glove_present(ff):
-            label, confidence = self._glove_rule_infer(window)
+            result = self._glove_rule_infer(window)
         elif window is not None:
-            label, confidence = self._vision_infer(window)
-        else:
-            label, confidence = "인식 중", 0.0
+            result = self._vision_infer(window)
 
+        if result is None:
+            return None
+
+        label, confidence = result
         total = ff.vision_weight + ff.glove_weight + 1e-9
         return RecognitionResult(
             text=label,
@@ -165,65 +159,47 @@ class HybridRecognitionEngine:
             is_partial=partial,
         )
 
-    def _vision_infer(self, window: np.ndarray) -> Tuple[str, float]:
+    def _vision_infer(self, window: np.ndarray) -> Optional[Tuple[str, float]]:
         """
         Gesture recognition from MediaPipe landmark geometry alone.
 
         Coordinate system (wrist-normalised, MediaPipe image space):
-          x  right →  positive
-          y  down  →  positive  (so y < 0 means ABOVE wrist)
-          z  depth →  negative toward camera
+          y increases downward → extended finger has tip_y < pip_y
 
-        A finger is EXTENDED when tip_y < pip_y
-        (tip is higher in the frame than the proximal joint).
+        Returns None when the gesture doesn't match a known sign.
         """
-        # Average landmark positions over the window
-        lm = window[:, :63].mean(axis=0).reshape(21, 3)  # (21, 3)
+        lm = window[:, :63].mean(axis=0).reshape(21, 3)
 
-        # Per-finger extension flags [thumb, index, middle, ring, pinky]
         extended = [lm[t, 1] < lm[p, 1] for t, p in zip(_TIPS, _PIPS)]
         thumb, index, middle, ring, pinky = extended
-        n_fingers = sum(extended[1:])  # non-thumb extended count
 
         # ── 좋아요 (thumbs up) ────────────────────────────────────
-        # Thumb clearly extended upward, other 4 fingers closed
         if thumb and not index and not middle and not ring and not pinky:
-            # Extra check: thumb tip is well above its MCP joint
             if lm[4, 1] < lm[2, 1] - 0.04:
                 return "좋아요", 0.78
 
         # ── 브이 (V / peace sign) ─────────────────────────────────
-        # Index + middle extended, ring + pinky closed
         if index and middle and not ring and not pinky:
             return "브이", 0.76
 
-        # ── 안녕하세요 (open hand / wave) ────────────────────────
-        if n_fingers >= 3:
+        # ── 안녕하세요 (open hand) ────────────────────────────────
+        if sum(extended[1:]) >= 3:
             return "안녕하세요", 0.72
 
-        # ── 아프다 (fist) ─────────────────────────────────────────
-        if not any(extended):
-            return "아프다", 0.68
+        return None  # 인식되지 않은 손 모양 → 결과 없음
 
-        # ── 도와주세요 (default) ──────────────────────────────────
-        return "도와주세요", 0.55
-
-    def _glove_rule_infer(self, window: np.ndarray) -> Tuple[str, float]:
+    def _glove_rule_infer(self, window: np.ndarray) -> Optional[Tuple[str, float]]:
         """Flex-sensor heuristic when glove is connected but ONNX absent."""
         flex = window[:, 63:68].mean(axis=0)
         total_bend = float(flex.sum())
 
         if total_bend < 0.3:
             return "안녕하세요", 0.72
-        if total_bend > 4.0:
-            return "아프다", 0.68
-        if flex[1] < 0.2 and flex[2] > 0.7:
-            return "의사", 0.65
         if flex[0] < 0.2 and total_bend > 3.5:
-            return "감사합니다", 0.70
-        if total_bend < 1.5:
-            return "괜찮아요", 0.66
-        return "도와주세요", 0.55
+            return "좋아요", 0.70
+        if flex[1] < 0.2 and flex[2] < 0.2 and total_bend > 2.5:
+            return "브이", 0.68
+        return None
 
     def _onnx_infer(self, window: np.ndarray) -> Tuple[str, float]:
         inp = window[np.newaxis].astype(np.float32)
