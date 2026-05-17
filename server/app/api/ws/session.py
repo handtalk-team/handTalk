@@ -46,7 +46,7 @@ from app.models.schemas.ws_messages import (
 from app.services.feedback.engine import FeedbackEngine
 from app.services.llm.pipeline import LLMPipeline
 from app.services.recognition.engine import HybridRecognitionEngine
-from app.services.recognition.glove import MockGloveSensor
+from app.services.recognition.glove import BLEGloveSensor
 from app.services.recognition.vision import ClientVisionCapture, WebcamVisionCapture
 
 logger = logging.getLogger(__name__)
@@ -68,8 +68,8 @@ class SessionHandler:
         self._feedback = FeedbackEngine()
         self._llm: Optional[LLMPipeline] = None
 
-        # Glove source: mock (now) or real BLE (future)
-        self._glove = MockGloveSensor(hz=settings.MOCK_GLOVE_HZ)
+        # Glove source: BLE (None until hardware connects)
+        self._glove = BLEGloveSensor()
 
         # Vision source: local webcam or client-provided landmarks
         self._vision: ClientVisionCapture | WebcamVisionCapture
@@ -169,9 +169,6 @@ class SessionHandler:
 
         # Inject server-generated glove data if client didn't provide any
         frame_data = raw_msg.get("data", {})
-        if not frame_data.get("glove"):
-            mock_glove = await self._glove.read()
-            frame_data["glove"] = mock_glove.model_dump()
 
         # Ensure session_id is set
         frame_data.setdefault("session_id", self._session_id)

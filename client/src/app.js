@@ -14,7 +14,6 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { GloveMock } from './glove_mock.js';
 import { CameraCapture } from './camera.js?v=2';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js';
@@ -22,7 +21,9 @@ import { UI } from './ui.js';
 const WS_URL = `ws://${location.host}/ws`;
 
 // ─── instantiate ───────────────────────────────────────────────
-const glove  = new GloveMock();
+// glove = null  →  vision-only mode
+// glove = new BLEGlove()  →  enable when ESP32 hardware is ready (see glove_mock.js)
+const glove  = null;
 const camera = new CameraCapture(
   document.getElementById('videoEl'),
   document.getElementById('canvasEl'),
@@ -91,9 +92,6 @@ camera.onFrame(async (visionData) => {
 
   if (!sessionActive || !ws.isOpen()) return;
 
-  const gloveData = glove.read();
-  ui.updateGloveDisplay(gloveData);
-
   const frame = {
     type: 'frame',
     data: {
@@ -101,7 +99,7 @@ camera.onFrame(async (visionData) => {
       sequence: frameSeq++,
       session_id: ws.sessionId ?? 'unknown',
       camera: visionData,
-      glove: gloveData,
+      glove: glove ? glove.read() : null,
     },
   };
 
@@ -132,7 +130,7 @@ document.getElementById('btnEnd').addEventListener('click', () => {
 
 // ─── boot ──────────────────────────────────────────────────────
 (async () => {
-  glove.start();
+  if (glove) await glove.start();
   ws.connect();  // WebSocket은 카메라와 무관하게 먼저 연결
   try {
     await camera.start();
