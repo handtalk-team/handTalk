@@ -171,6 +171,19 @@
     .msg-sys  { align-self: center; background: #1a1d27; color: #6b7280; font-size: 0.78rem; padding: 4px 12px; }
     .msg-partial { opacity: 0.6; font-style: italic; }
 
+    /* Live sign indicator — updates in-place, no chat spam */
+    #liveSign {
+      padding: 8px 16px;
+      background: #1e2030;
+      border: 1px solid #7c6af7;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      color: #a78bfa;
+      text-align: center;
+      animation: pulse 1s infinite alternate;
+    }
+    @keyframes pulse { from { opacity: 0.6; } to { opacity: 1; } }
+
     .ctrl-row {
       display: flex;
       gap: 10px;
@@ -366,6 +379,9 @@
       <button id="btnStart">세션 시작</button>
       <button id="btnEnd" disabled>세션 종료</button>
     </div>
+    <div id="liveSign" style="display:none">
+      <span id="liveSignText"></span>
+    </div>
     <div id="chatBox">
       <div class="msg msg-sys">서버에 연결한 뒤 "세션 시작"을 누르세요.</div>
     </div>
@@ -409,6 +425,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-<script type="module" src="src/app.js?v=3"></script>
+<script type="module" src="src/app.js?v=4"></script>
 </body>
 </html>

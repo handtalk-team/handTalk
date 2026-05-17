@@ -5,6 +5,9 @@
 
 export class UI {
   #chatBox      = document.getElementById('chatBox');
+  #liveSign     = document.getElementById('liveSign');
+  #liveSignText = document.getElementById('liveSignText');
+  #liveTimer    = null;
   #feedbackLog  = document.getElementById('feedbackLog');
   #statTotal    = document.getElementById('statTotal');
   #statAcc      = document.getElementById('statAcc');
@@ -70,20 +73,35 @@ export class UI {
   }
 
   onRecognition(msg) {
+    const pct = Math.round(msg.confidence * 100);
+
+    if (msg.is_partial) {
+      // 감지 중 → 상단 라이브 배지만 업데이트 (채팅 추가 안 함)
+      this.#liveSignText.textContent = `감지 중: ${msg.text}  ${pct}%`;
+      this.#liveSign.style.display = 'block';
+
+      // 1.5초 동안 새 partial이 없으면 자동으로 숨김
+      clearTimeout(this.#liveTimer);
+      this.#liveTimer = setTimeout(() => {
+        this.#liveSign.style.display = 'none';
+      }, 1500);
+      return;
+    }
+
+    // 확정 결과 → 라이브 배지 숨기고 채팅에 추가
+    this.#liveSign.style.display = 'none';
+    clearTimeout(this.#liveTimer);
+
     this.#totalSigns++;
     this.#statTotal.textContent = this.#totalSigns;
 
-    const pct = Math.round(msg.confidence * 100);
-    const el = document.createElement('div');
-    el.className = msg.is_partial ? 'msg msg-user msg-partial' : 'msg msg-user';
-    el.textContent = `${msg.text}  (${pct}%)`;
-
-    if (!msg.is_partial && msg.confidence >= 0.7) {
-      this.#correctSigns++;
-    }
+    if (msg.confidence >= 0.7) this.#correctSigns++;
     this.#statAcc.textContent =
       `${Math.round((this.#correctSigns / this.#totalSigns) * 100)}%`;
 
+    const el = document.createElement('div');
+    el.className = 'msg msg-user';
+    el.textContent = `${msg.text}  (${pct}%)`;
     this.#chatBox.appendChild(el);
     this.#chatBox.scrollTop = this.#chatBox.scrollHeight;
   }
