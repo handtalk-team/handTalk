@@ -72,29 +72,24 @@ export class UI {
     this.#chatBox.scrollTop = this.#chatBox.scrollHeight;
   }
 
-  onRecognition(msg) {
-    const pct = Math.round(msg.confidence * 100);
-
-    if (msg.is_partial) {
-      // 감지 중 → 상단 라이브 배지만 업데이트 (채팅 추가 안 함)
-      this.#liveSignText.textContent = `감지 중: ${msg.text}  ${pct}%`;
+  /** 카메라가 손을 감지하면 호출 (app.js에서) */
+  setHandDetecting(detecting) {
+    if (detecting) {
+      this.#liveSignText.textContent = '✋ 수어 인식 중...';
       this.#liveSign.style.display = 'block';
-
-      // 1.5초 동안 새 partial이 없으면 자동으로 숨김
-      clearTimeout(this.#liveTimer);
-      this.#liveTimer = setTimeout(() => {
-        this.#liveSign.style.display = 'none';
-      }, 1500);
-      return;
+    } else {
+      this.#liveSign.style.display = 'none';
     }
+  }
 
-    // 확정 결과 → 라이브 배지 숨기고 채팅에 추가
+  onRecognition(msg) {
+    // 확정 결과만 도착 (partial 없음)
     this.#liveSign.style.display = 'none';
-    clearTimeout(this.#liveTimer);
 
     this.#totalSigns++;
     this.#statTotal.textContent = this.#totalSigns;
 
+    const pct = Math.round(msg.confidence * 100);
     if (msg.confidence >= 0.7) this.#correctSigns++;
     this.#statAcc.textContent =
       `${Math.round((this.#correctSigns / this.#totalSigns) * 100)}%`;

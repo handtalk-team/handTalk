@@ -65,10 +65,10 @@ class HybridRecognitionEngine:
     """One instance per WebSocket session. Not thread-safe."""
 
     IDLE_TIMEOUT_S: float = 2.0
-    COOLDOWN_S: float = 1.5
-    # Motion thresholds differ by modality (different physical units)
-    MOTION_THRESHOLD_GYRO: float = 0.02    # rad/s  — glove gyro norm
-    MOTION_THRESHOLD_VISION: float = 0.006  # normalized units/frame — landmark velocity
+    COOLDOWN_S: float = 2.0
+    STILLNESS_S: float = 0.8            # 이 시간 동안 정지 상태면 확정
+    MOTION_THRESHOLD_GYRO: float = 0.02
+    MOTION_THRESHOLD_VISION: float = 0.006
 
     def __init__(self) -> None:
         self._fusion = SensorFusionModule()
@@ -121,10 +121,10 @@ class HybridRecognitionEngine:
             return None
 
         idle_for = now - self._last_motion_t
-        if idle_for < 0.3:
-            return self._infer(partial=True, ff=ff)
+        if idle_for < self.STILLNESS_S:
+            return None  # 아직 기다리는 중 — partial 없음
 
-        # Hand still for > 300 ms → commit gesture
+        # STILLNESS_S 동안 정지 → 확정 (딱 한 번만)
         result = self._infer(partial=False, ff=ff)
         self._state = _GestureState.COOLDOWN
         self._cooldown_start = now

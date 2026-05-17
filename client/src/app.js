@@ -14,7 +14,7 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=4';
+import { CameraCapture } from './camera.js?v=5';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js';
 
@@ -86,8 +86,10 @@ camera.onFrame(async (visionData) => {
   // Always update the confidence bar (even outside sessions)
   if (visionData) {
     ui.setVisionConfidence(visionData.confidence);
+    if (sessionActive) ui.setHandDetecting(true);
   } else {
     ui.setVisionConfidence(0);
+    if (sessionActive) ui.setHandDetecting(false);
   }
 
   if (!sessionActive || !ws.isOpen()) return;
