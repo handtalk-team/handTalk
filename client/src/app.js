@@ -14,7 +14,7 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=5';
+import { CameraCapture } from './camera.js?v=6';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js';
 
@@ -64,6 +64,9 @@ ws.on('message', (msg) => {
       sessionActive = false;
       ui.setSessionButtons(false);
       break;
+    case 'collect_ack':
+      onCollectAck(msg);
+      break;
     case 'system':
       ui.addSystemMsg(msg.message, msg.level);
       break;
@@ -79,6 +82,7 @@ camera.onFrame(async (visionData) => {
   const now = performance.now();
   if (now - fpsTime >= 1000) {
     ui.setFPS(fpsCounter);
+    if (fpsCounter === 0) console.warn('[handTalk] camera callback not firing!');
     fpsCounter = 0;
     fpsTime = now;
   }
@@ -92,7 +96,10 @@ camera.onFrame(async (visionData) => {
     if (sessionActive) ui.setHandDetecting(false);
   }
 
-  if (!sessionActive || !ws.isOpen()) return;
+  if (!sessionActive || !ws.isOpen()) {
+    if (sessionActive) console.warn('[handTalk] frame skipped — ws not open', ws.isOpen());
+    return;
+  }
 
   const frame = {
     type: 'frame',
@@ -129,6 +136,63 @@ document.getElementById('btnEnd').addEventListener('click', () => {
   sessionActive = false;
   ui.setSessionButtons(false);
 });
+
+// ─── Data collection ────────────────────────────────────────────
+const btnCapture = document.getElementById('btnCapture');
+const collectLabelInput = document.getElementById('collectLabelInput');
+const collectCounts = document.getElementById('collectCounts');
+const recordBar = document.getElementById('recordBar');
+const recordFill = document.getElementById('recordFill');
+const labelCounts = {};
+let recording = false;
+
+function startRecording() {
+  if (!ws.isOpen()) { ui.addSystemMsg('서버에 연결되지 않았습니다.', 'error'); return; }
+  if (!sessionActive) { ui.addSystemMsg('세션을 먼저 시작하세요.', 'warning'); return; }
+  const label = collectLabelInput.value.trim();
+  if (!label) { ui.addSystemMsg('레이블을 입력하세요.', 'warning'); return; }
+  if (recording) return;
+
+  recording = true;
+  btnCapture.textContent = '녹화 중...';
+  btnCapture.style.background = '#ef4444';
+
+  // 진행바 표시
+  recordBar.style.display = 'block';
+  recordFill.style.transition = 'none';
+  recordFill.style.width = '0%';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      recordFill.style.transition = 'width 2s linear';
+      recordFill.style.width = '100%';
+    });
+  });
+
+  setTimeout(() => {
+    ws.send({ type: 'capture_sample', label });
+    recording = false;
+    btnCapture.textContent = '녹화 시작 [Space]';
+    btnCapture.style.background = '#0f766e';
+    recordBar.style.display = 'none';
+    recordFill.style.width = '0%';
+  }, 2000);
+}
+
+btnCapture.addEventListener('click', startRecording);
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && document.activeElement !== collectLabelInput) {
+    e.preventDefault();
+    startRecording();
+  }
+});
+
+function onCollectAck(msg) {
+  labelCounts[msg.label] = msg.count;
+  collectCounts.innerHTML = Object.entries(labelCounts)
+    .map(([l, c]) => `<span style="display:flex;justify-content:space-between"><span>${l}</span><span style="color:#a5b4fc;font-weight:600">${c}개</span></span>`)
+    .join('');
+}
 
 // ─── boot ──────────────────────────────────────────────────────
 (async () => {

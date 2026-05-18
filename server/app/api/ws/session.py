@@ -25,9 +25,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Optional
+
+import numpy as np
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -36,6 +39,7 @@ from app.core.config import get_settings
 from app.core.redis_client import get_redis
 from app.models.schemas.sensor import SensorFrame
 from app.models.schemas.ws_messages import (
+    CollectAck,
     EndSession,
     FrameMessage,
     RecognitionResult,
@@ -83,13 +87,12 @@ class SessionHandler:
 
     async def run(self) -> None:
         """Entry point called from the FastAPI WebSocket route."""
-        # Assign a temporary session ID immediately so we can accept the socket
-        temp_id = str(uuid.uuid4())
-        await manager.connect(self._ws, temp_id)
-        self._session_id = temp_id
+        await self._ws.accept()
+
+        self._session_id = str(uuid.uuid4())
+        await manager.connect(self._ws, self._session_id)
 
         try:
-            await manager.accept(self._ws)
             await self._send(SystemMessage(
                 level="info",
                 message="연결되었습니다. 세션을 시작하려면 start_session 메시지를 보내주세요.",
@@ -99,7 +102,10 @@ class SessionHandler:
             logger.info("Client disconnected session=%s", self._session_id)
         except Exception as e:
             logger.exception("Unhandled error in session %s: %s", self._session_id, e)
-            await self._send(SystemMessage(level="error", message=str(e)))
+            try:
+                await self._send(SystemMessage(level="error", message=str(e)))
+            except Exception:
+                pass
         finally:
             await self._cleanup()
             manager.disconnect(self._ws, self._session_id)
@@ -122,6 +128,12 @@ class SessionHandler:
             elif msg_type == "frame":
                 if self._running:
                     await self._handle_frame(msg)
+            elif msg_type == "capture_sample":
+                label = msg.get("label", "").strip()
+                if label:
+                    await self._capture_sample(label)
+                else:
+                    await self._send(SystemMessage(level="warning", message="레이블을 입력해주세요."))
             elif msg_type == "end_session":
                 await self._handle_end()
                 break
@@ -136,11 +148,6 @@ class SessionHandler:
     async def _handle_start(self, msg: StartSession) -> None:
         self._scenario = msg.scenario
         self._user_id = msg.user_id
-
-        # Reassign session ID (now we have user context)
-        manager.disconnect(self._ws, self._session_id)
-        self._session_id = str(uuid.uuid4())
-        await manager.connect(self._ws, self._session_id)
 
         # Start sensor sources
         await self._glove.start()
@@ -241,6 +248,22 @@ class SessionHandler:
 
     async def _send(self, msg) -> None:
         await manager.send(self._ws, msg.model_dump())
+
+    async def _capture_sample(self, label: str) -> None:
+        window = self._engine._fusion.get_window_array()
+        if window is None or len(window) < 10:
+            await self._send(SystemMessage(level="warning", message="윈도우 데이터 부족 — 동작 후 저장하세요."))
+            return
+        out_dir = os.path.join("ml", "data", label)
+        os.makedirs(out_dir, exist_ok=True)
+        existing = [f for f in os.listdir(out_dir) if f.startswith("sample_") and f.endswith(".npy")]
+        idx = len(existing)
+        path = os.path.join(out_dir, f"sample_{idx:03d}.npy")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, np.save, path, window.astype(np.float32))
+        count = idx + 1
+        logger.info("capture label=%s path=%s count=%d frames=%d", label, path, count, len(window))
+        await self._send(CollectAck(label=label, count=count))
 
     async def _load_feedback_refs(self) -> None:
         loop = asyncio.get_event_loop()

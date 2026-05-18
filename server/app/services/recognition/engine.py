@@ -64,9 +64,10 @@ _PIPS = [3, 6, 10, 14, 18]   # IP/PIP joints (one below each tip)
 class HybridRecognitionEngine:
     """One instance per WebSocket session. Not thread-safe."""
 
-    IDLE_TIMEOUT_S: float = 2.0
-    COOLDOWN_S: float = 2.0
-    STILLNESS_S: float = 0.8            # 이 시간 동안 정지 상태면 확정
+    COOLDOWN_S: float = 2.0              # 인식 후 재인식 방지 대기 시간
+    STILLNESS_S: float = 0.3            # 동작 종료 판단 정지 시간 (0.3초)
+    MIN_MOTION_FRAMES: int = 8          # 최소 이만큼 움직임이 있어야 진짜 수어
+    MIN_ACCUMULATE_S: float = 1.0       # 최소 이 시간 이상 누적해야 인식 허용
     MOTION_THRESHOLD_GYRO: float = 0.02
     MOTION_THRESHOLD_VISION: float = 0.006
 
@@ -75,8 +76,11 @@ class HybridRecognitionEngine:
         self._onnx_session = self._load_onnx()
         self._state = _GestureState.IDLE
         self._last_motion_t = time.time()
+        self._accumulate_start: Optional[float] = None
         self._cooldown_start: Optional[float] = None
-        self._prev_vision: Optional[np.ndarray] = None  # for velocity-based motion
+        self._prev_vision: Optional[np.ndarray] = None
+        self._motion_frame_count: int = 0
+        self._last_window: Optional[np.ndarray] = None  # 마지막 분류에 쓰인 윈도우
 
     # ─────────────────────── public API ─────────────────────────
 
@@ -88,7 +92,9 @@ class HybridRecognitionEngine:
         self._fusion.reset()
         self._state = _GestureState.IDLE
         self._last_motion_t = time.time()
+        self._accumulate_start = None
         self._prev_vision = None
+        self._motion_frame_count = 0
 
     # ─────────────────────── state machine ──────────────────────
 
@@ -98,6 +104,9 @@ class HybridRecognitionEngine:
         if self._state == _GestureState.COOLDOWN:
             if now - self._cooldown_start < self.COOLDOWN_S:
                 return None
+            self._fusion.reset()
+            self._prev_vision = None
+            self._motion_frame_count = 0
             self._state = _GestureState.IDLE
 
         motion_energy = self._compute_motion_energy(ff)
@@ -107,27 +116,52 @@ class HybridRecognitionEngine:
             else self.MOTION_THRESHOLD_VISION
         )
 
+        if motion_energy > threshold:
+            self._motion_frame_count += 1
+            self._last_motion_t = now  # 마지막 움직임 시각 갱신
+
         if self._state == _GestureState.IDLE:
             if motion_energy > threshold:
-                self._state = _GestureState.ACCUMULATING
+                self._fusion.reset()
+                self._motion_frame_count = 1
                 self._last_motion_t = now
+                self._accumulate_start = now
+                self._state = _GestureState.ACCUMULATING
             return None
 
         # ── ACCUMULATING ─────────────────────────────────────────
-        if motion_energy > threshold:
-            self._last_motion_t = now
+        win_len = len(self._fusion._window)
+        accumulated_s = now - self._accumulate_start
 
-        if not self._fusion.window_full:
+        # 조건 1: 최대 윈도우(2초) 도달 → 강제 분류
+        max_window = settings.WINDOW_SIZE
+        if win_len >= max_window:
+            if self._motion_frame_count >= self.MIN_MOTION_FRAMES:
+                logger.debug("classify(max-window): frames=%d", win_len)
+                return self._finalize(ff, now)
+            self._fusion.reset()
+            self._motion_frame_count = 0
+            self._accumulate_start = None
+            self._state = _GestureState.IDLE
             return None
 
-        idle_for = now - self._last_motion_t
-        if idle_for < self.STILLNESS_S:
-            return None  # 아직 기다리는 중 — partial 없음
+        # 조건 2: 최소 1초 누적 + 충분한 동작 + 0.3초 정지 → 종료 감지
+        if accumulated_s >= self.MIN_ACCUMULATE_S:
+            if self._motion_frame_count >= self.MIN_MOTION_FRAMES:
+                if now - self._last_motion_t >= self.STILLNESS_S:
+                    logger.debug("classify(stillness): frames=%d motion=%d elapsed=%.2fs",
+                                 win_len, self._motion_frame_count, accumulated_s)
+                    return self._finalize(ff, now)
 
-        # STILLNESS_S 동안 정지 → 확정 (딱 한 번만)
+        return None
+
+    def _finalize(self, ff: FusedFrame, now: float) -> Optional[RecognitionResult]:
+        self._last_window = self._fusion.get_window_array()  # 분류 전에 보존
         result = self._infer(partial=False, ff=ff)
         self._state = _GestureState.COOLDOWN
         self._cooldown_start = now
+        self._motion_frame_count = 0
+        self._accumulate_start = None
         self._fusion.reset()
         return result
 

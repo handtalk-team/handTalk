@@ -113,3 +113,9 @@ class SystemMessage(BaseModel):
     type: Literal["system"] = "system"
     level: Literal["info", "warning", "error"] = "info"
     message: str
+
+
+class CollectAck(BaseModel):
+    type: Literal["collect_ack"] = "collect_ack"
+    label: str
+    count: int
