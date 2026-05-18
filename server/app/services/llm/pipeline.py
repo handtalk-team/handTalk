@@ -30,17 +30,18 @@ settings = get_settings()
 
 # ─────────────────────── 시스템 프롬프트 ─────────────────────────
 
-_SYSTEM_PROMPT_BASE = """You are a Korean Sign Language (KSL) tutor AI. IMPORTANT RULES:
-1. ALWAYS respond in Korean only. Never use English, Japanese, Chinese, or any other language.
-2. Keep responses to 1-2 sentences maximum.
-3. Be warm and encouraging toward the learner.
-4. If the user made a signing error, start your response with "(교정)".
+_SYSTEM_PROMPT_BASE = """당신은 한국 수어(KSL) 튜터 AI입니다.
 
-Context: The user is practicing sign language for hospital/medical settings.
-Scenario: {scenario}
-Detail: {scenario_detail}
+절대 규칙:
+- 반드시 한국어로만 답변하세요. 영어, 중국어, 일본어 등 다른 언어는 절대 사용하지 마세요.
+- 1~2문장으로 짧게 답변하세요.
+- 사용자가 수어 단어를 인식했을 때 따뜻하고 격려하는 반응을 하세요.
+- 수어 동작 방법에 대한 교정이나 설명은 하지 마세요. 당신은 동작을 알 수 없습니다.
 
-Remember: Korean responses ONLY. Short and clear."""
+시나리오: {scenario}
+상세: {scenario_detail}
+
+다시 한번 강조: 오직 한국어만 사용하세요."""
 
 _SCENARIO_DETAILS = {
     "free_talk": "자유 주제로 대화합니다. 사용자가 말하는 내용에 자연스럽게 반응하세요.",
@@ -108,7 +109,7 @@ class LLMPipeline:
             self._error_context.extend(error_hints)
             self._error_context = self._error_context[-5:]
 
-        user_content = user_sign_text
+        user_content = f"[수어 인식: {user_sign_text}] (한국어로만 짧게 반응해주세요)"
         if error_hints:
             user_content += f"\n[인식된 오류: {', '.join(error_hints)}]"
 

@@ -41,12 +41,16 @@ from app.services.sync.fusion import FusedFrame, SensorFusionModule
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-SIGN_VOCAB: Dict[int, str] = {
-    0: "안녕하세요",
-    1: "좋아요",
-    2: "브이",
-}
+def _load_vocab() -> Dict[int, str]:
+    labels_path = os.path.join(os.path.dirname(settings.ONNX_MODEL_PATH), "labels.txt")
+    if os.path.exists(labels_path):
+        with open(labels_path, encoding="utf-8") as f:
+            labels = [l.strip() for l in f if l.strip()]
+        logger.info("SIGN_VOCAB loaded from %s: %s", labels_path, labels)
+        return {i: l for i, l in enumerate(labels)}
+    return {0: "안녕하세요", 1: "좋아요", 2: "브이"}
 
+SIGN_VOCAB: Dict[int, str] = _load_vocab()
 NUM_CLASSES = len(SIGN_VOCAB)
 
 
@@ -173,10 +177,7 @@ class HybridRecognitionEngine:
         result: Optional[Tuple[str, float]] = None
         if window is not None and self._onnx_session is not None:
             result = self._onnx_infer(window)
-        elif window is not None and self._glove_present(ff):
-            result = self._glove_rule_infer(window)
-        elif window is not None:
-            result = self._vision_infer(window)
+        # 룰 기반 폴백 비활성화 — ONNX 모델 없으면 추론 안 함
 
         if result is None:
             return None
@@ -236,15 +237,22 @@ class HybridRecognitionEngine:
         return None
 
     def _onnx_infer(self, window: np.ndarray) -> Tuple[str, float]:
-        inp = window[np.newaxis].astype(np.float32)
+        # 모델은 앞 63차원(vision landmarks)만 사용, SEQ_LEN=60으로 패딩/자르기
+        seq = window[:, :63]
+        if len(seq) < 60:
+            pad = np.zeros((60 - len(seq), 63), dtype=np.float32)
+            seq = np.concatenate([seq, pad], axis=0)
+        else:
+            seq = seq[:60]
+        inp = seq[np.newaxis].astype(np.float32)
         try:
             logits = self._onnx_session.run(None, {"input": inp})[0][0]
             probs = self._softmax(logits)
             idx = int(np.argmax(probs))
             return SIGN_VOCAB.get(idx, "?"), float(probs[idx])
         except Exception as e:
-            logger.warning("ONNX inference failed: %s — falling back", e)
-            return self._vision_infer(window)
+            logger.warning("ONNX inference failed: %s", e)
+            return None
 
     # ─────────────────────── utilities ──────────────────────────
 

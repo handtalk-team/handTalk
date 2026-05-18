@@ -97,14 +97,9 @@ class FeedbackEngine:
             if dtw_score > 15.0:
                 suggestions.append("전체적인 동작 속도와 궤적을 다시 확인해보세요.")
 
-        # ── Per-part heuristic checks ─────────────────────────────
-        errors += self._check_flex_errors(sign_label, feature_window)
-        errors += self._check_wrist_stability(feature_window)
-
-        if not errors:
-            suggestions.append("동작이 정확합니다! 잘 하셨어요.")
-        else:
-            suggestions.append("틀린 부분을 확인하고 천천히 다시 연습해보세요.")
+        # ── Per-part heuristic checks (레퍼런스 있을 때만) ───────────
+        if sign_label in self._references:
+            errors += self._check_flex_errors(sign_label, feature_window)
 
         # ── Log for session summary ───────────────────────────────
         entry = {

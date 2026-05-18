@@ -82,6 +82,7 @@ class SessionHandler:
         self._latencies: list[float] = []
 
         self._running = False
+        self._recording = False  # 데이터 수집 녹화 중이면 추론 결과 억제
 
     # ─────────────────────── lifecycle ──────────────────────────
 
@@ -128,7 +129,10 @@ class SessionHandler:
             elif msg_type == "frame":
                 if self._running:
                     await self._handle_frame(msg)
+            elif msg_type == "recording_mode":
+                self._recording = msg.get("active", False)
             elif msg_type == "capture_sample":
+                self._recording = False
                 label = msg.get("label", "").strip()
                 if label:
                     await self._capture_sample(label)
@@ -199,7 +203,7 @@ class SessionHandler:
             sensor_frame
         )
 
-        if result:
+        if result and not self._recording:
             await self._send(result)
 
             if not result.is_partial:

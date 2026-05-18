@@ -154,6 +154,7 @@ function startRecording() {
   if (recording) return;
 
   recording = true;
+  ws.send({ type: 'recording_mode', active: true });
   btnCapture.textContent = '녹화 중...';
   btnCapture.style.background = '#ef4444';
 

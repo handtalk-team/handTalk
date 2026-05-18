@@ -1,0 +1,4 @@
+data/**/*.npy
+models/*.onnx
+models/*.pt
+models/labels.txt
