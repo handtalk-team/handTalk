@@ -78,6 +78,8 @@ class LLMResponse(BaseModel):
     avatar_commands: List[AvatarCommand]
     # Tokens used — useful for monitoring API costs
     tokens_used: int = 0
+    # prompt: 새 단어 안내 | correct: 정답 + 다음 단어 | feedback: 오답 교정
+    kind: Literal["prompt", "correct", "feedback"] = "prompt"
 
 
 class InlineError(BaseModel):
