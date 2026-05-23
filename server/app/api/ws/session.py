@@ -145,8 +145,10 @@ class SessionHandler:
                 else:
                     await self._send(SystemMessage(level="warning", message="레이블을 입력해주세요."))
             elif msg_type == "end_session":
-                await self._handle_end()
-                break
+                if self._running:
+                    await self._handle_end()
+                    await self._between_sessions_cleanup()
+                # break 하지 않음 — 연결 유지, start_session 재사용 가능
             else:
                 await self._send(SystemMessage(
                     level="warning",
@@ -156,6 +158,8 @@ class SessionHandler:
     # ─────────────────────── handlers ───────────────────────────
 
     async def _handle_start(self, msg: StartSession) -> None:
+        # 재시작 시 새 세션 ID 발급
+        self._session_id = str(uuid.uuid4())
         self._scenario = msg.scenario
         self._user_id = msg.user_id
 
@@ -356,7 +360,16 @@ class SessionHandler:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._feedback.load_references)
 
+    async def _between_sessions_cleanup(self) -> None:
+        """end_session 후 연결은 유지하면서 이전 세션 리소스만 정리."""
+        if self._llm:
+            await self._llm.stop()
+            self._llm = None
+        self._engine.reset_session()
+        await self._glove.stop()
+
     async def _cleanup(self) -> None:
+        """WebSocket 연결 종료 시 최종 정리."""
         self._running = False
         await self._glove.stop()
         if self._llm:
