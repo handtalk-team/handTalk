@@ -68,12 +68,10 @@ _PIPS = [3, 6, 10, 14, 18]   # IP/PIP joints (one below each tip)
 class HybridRecognitionEngine:
     """One instance per WebSocket session. Not thread-safe."""
 
-    COOLDOWN_S: float = 2.0              # 인식 후 재인식 방지 대기 시간
-    STILLNESS_S: float = 0.7            # 동작 종료 판단 정지 시간 (0.7초 — 안녕하세요처럼 손 흔드는 중 잠깐 멈춰도 오인식 방지)
-    MIN_MOTION_FRAMES: int = 12         # 최소 이만큼 움직임이 있어야 진짜 수어
-    MIN_ACCUMULATE_S: float = 1.5       # 최소 이 시간 이상 누적해야 인식 허용
+    COOLDOWN_S: float = 2.5              # 인식 후 재인식 방지 대기 시간
+    MIN_MOTION_FRAMES: int = 10         # 최소 이만큼 움직임이 있어야 진짜 수어 (노이즈 거름)
     MOTION_THRESHOLD_GYRO: float = 0.02
-    MOTION_THRESHOLD_VISION: float = 0.010  # 너무 민감하면 손 진입 시 즉시 타이머 시작됨
+    MOTION_THRESHOLD_VISION: float = 0.010
 
     def __init__(self) -> None:
         self._fusion = SensorFusionModule()
@@ -134,28 +132,18 @@ class HybridRecognitionEngine:
             return None
 
         # ── ACCUMULATING ─────────────────────────────────────────
+        # 60프레임(30fps × 2초)이 채워지면 분류. 조기 종료 없음.
         win_len = len(self._fusion._window)
-        accumulated_s = now - self._accumulate_start
-
-        # 조건 1: 최대 윈도우(2초) 도달 → 강제 분류
-        max_window = settings.WINDOW_SIZE
-        if win_len >= max_window:
+        if win_len >= settings.WINDOW_SIZE:
             if self._motion_frame_count >= self.MIN_MOTION_FRAMES:
-                logger.debug("classify(max-window): frames=%d", win_len)
+                logger.debug("classify(2s-window): frames=%d motion=%d",
+                             win_len, self._motion_frame_count)
                 return self._finalize(ff, now)
+            # 움직임 부족 → 버리고 재시작
             self._fusion.reset()
             self._motion_frame_count = 0
             self._accumulate_start = None
             self._state = _GestureState.IDLE
-            return None
-
-        # 조건 2: 최소 1초 누적 + 충분한 동작 + 0.3초 정지 → 종료 감지
-        if accumulated_s >= self.MIN_ACCUMULATE_S:
-            if self._motion_frame_count >= self.MIN_MOTION_FRAMES:
-                if now - self._last_motion_t >= self.STILLNESS_S:
-                    logger.debug("classify(stillness): frames=%d motion=%d elapsed=%.2fs",
-                                 win_len, self._motion_frame_count, accumulated_s)
-                    return self._finalize(ff, now)
 
         return None
 
