@@ -69,11 +69,11 @@ class HybridRecognitionEngine:
     """One instance per WebSocket session. Not thread-safe."""
 
     COOLDOWN_S: float = 2.0              # 인식 후 재인식 방지 대기 시간
-    STILLNESS_S: float = 0.3            # 동작 종료 판단 정지 시간 (0.3초)
-    MIN_MOTION_FRAMES: int = 8          # 최소 이만큼 움직임이 있어야 진짜 수어
-    MIN_ACCUMULATE_S: float = 1.0       # 최소 이 시간 이상 누적해야 인식 허용
+    STILLNESS_S: float = 0.7            # 동작 종료 판단 정지 시간 (0.7초 — 안녕하세요처럼 손 흔드는 중 잠깐 멈춰도 오인식 방지)
+    MIN_MOTION_FRAMES: int = 12         # 최소 이만큼 움직임이 있어야 진짜 수어
+    MIN_ACCUMULATE_S: float = 1.5       # 최소 이 시간 이상 누적해야 인식 허용
     MOTION_THRESHOLD_GYRO: float = 0.02
-    MOTION_THRESHOLD_VISION: float = 0.006
+    MOTION_THRESHOLD_VISION: float = 0.010  # 너무 민감하면 손 진입 시 즉시 타이머 시작됨
 
     def __init__(self) -> None:
         self._fusion = SensorFusionModule()

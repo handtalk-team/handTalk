@@ -293,12 +293,24 @@ class LLMPipeline:
         )
 
     def _filter_korean(self, text: str, fallback: str) -> str:
-        """ASCII 알파벳 비율이 30% 초과이면 폴백 사용."""
+        """일본어·중국어·영어가 섞이면 폴백 사용."""
         if not text:
             return fallback
+
+        for ch in text:
+            code = ord(ch)
+            # 히라가나(3040-309F), 가타카나(30A0-30FF), CJK 한자(4E00-9FFF, 3400-4DBF)
+            if (0x3040 <= code <= 0x30FF or
+                    0x3400 <= code <= 0x4DBF or
+                    0x4E00 <= code <= 0x9FFF):
+                logger.warning("LLM 응답에 일본어/한자 포함, 폴백 사용: %r", text)
+                return fallback
+
+        # 영어 알파벳 비율 체크 (30% 초과 시 거부)
         ascii_alpha = sum(1 for c in text if ord(c) < 128 and c.isalpha())
         total_alpha = sum(1 for c in text if c.isalpha())
         if total_alpha > 0 and ascii_alpha / total_alpha > 0.3:
-            logger.warning("LLM 응답에 비한국어 포함, 폴백 사용: %r", text)
+            logger.warning("LLM 응답에 영어 포함, 폴백 사용: %r", text)
             return fallback
+
         return text
