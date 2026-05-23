@@ -132,7 +132,11 @@ class SessionHandler:
                 if self._running:
                     await self._handle_frame(msg)
             elif msg_type == "recording_mode":
-                self._recording = msg.get("active", False)
+                active = msg.get("active", False)
+                self._recording = active
+                if active:
+                    # 녹화 시작 시 버퍼 초기화 — 이전 추론 잔여 데이터 제거
+                    self._engine._fusion.reset()
             elif msg_type == "capture_sample":
                 self._recording = False
                 label = msg.get("label", "").strip()
@@ -206,6 +210,11 @@ class SessionHandler:
             sensor_frame = SensorFrame(**frame_data)
         except Exception as e:
             logger.warning("Bad SensorFrame: %s", e)
+            return
+
+        # ── 녹화 중: 추론 없이 버퍼만 채우고 종료 ────────────────
+        if self._recording:
+            self._engine._fusion.push_frame(sensor_frame)
             return
 
         # ── Recognition ──────────────────────────────────────────
