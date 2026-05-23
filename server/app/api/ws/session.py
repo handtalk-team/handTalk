@@ -36,7 +36,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.api.ws.manager import manager
 from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
 from app.core.redis_client import get_redis
+from app.models.domain.session import DataSample, LearningSession, SignAttempt
 from app.models.schemas.sensor import SensorFrame
 from app.models.schemas.ws_messages import (
     CollectAck,
@@ -170,10 +172,18 @@ class SessionHandler:
         await self._llm.start()
 
         self._running = True
+
+        # DB에 세션 기록 생성
+        asyncio.create_task(self._db_create_session())
+
         await self._send(SystemMessage(
             level="info",
             message=f"세션 시작! 시나리오: {self._scenario}  ID: {self._session_id}",
         ))
+
+        # 첫 번째 단어 안내 (LLM 호출 없이 즉시 전송)
+        opening = self._llm.get_opening_message()
+        await self._send(opening)
 
     async def _handle_frame(self, raw_msg: dict) -> None:
         t0 = time.perf_counter()
@@ -207,6 +217,9 @@ class SessionHandler:
             await self._send(result)
 
             if not result.is_partial:
+                # ── DB 저장 ───────────────────────────────────────────
+                asyncio.create_task(self._db_save_attempt(result))
+
                 # ── LLM response ──────────────────────────────────────
                 llm_resp = await self._llm.chat(result.text)
                 await self._send(llm_resp)
@@ -241,6 +254,7 @@ class SessionHandler:
             self._session_id
         )
         await self._send(summary)
+        asyncio.create_task(self._db_close_session(summary))
         logger.info(
             "Session ended: %s  signs=%d  accuracy=%.1f%%",
             self._session_id,
@@ -252,6 +266,50 @@ class SessionHandler:
 
     async def _send(self, msg) -> None:
         await manager.send(self._ws, msg.model_dump())
+
+    async def _db_create_session(self) -> None:
+        from datetime import datetime
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(LearningSession(
+                    id=self._session_id,
+                    user_id=self._user_id,
+                    scenario=self._scenario,
+                    started_at=datetime.utcnow(),
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.warning("DB session create failed: %s", e)
+
+    async def _db_save_attempt(self, result: RecognitionResult) -> None:
+        from datetime import datetime
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(SignAttempt(
+                    id=str(uuid.uuid4()),
+                    session_id=self._session_id,
+                    sign_label=result.text,
+                    is_correct=1 if result.confidence >= settings.RECOGNITION_THRESHOLD else 0,
+                    confidence=result.confidence,
+                    timestamp=datetime.utcnow(),
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.warning("DB attempt save failed: %s", e)
+
+    async def _db_close_session(self, summary: SessionSummary) -> None:
+        from datetime import datetime
+        try:
+            async with AsyncSessionLocal() as db:
+                row = await db.get(LearningSession, self._session_id)
+                if row:
+                    row.ended_at = datetime.utcnow()
+                    row.total_signs = summary.total_signs
+                    row.correct_signs = summary.correct_signs
+                    row.accuracy = summary.accuracy
+                    await db.commit()
+        except Exception as e:
+            logger.warning("DB session close failed: %s", e)
 
     async def _capture_sample(self, label: str) -> None:
         window = self._engine._fusion.get_window_array()
@@ -267,6 +325,22 @@ class SessionHandler:
         await loop.run_in_executor(None, np.save, path, window.astype(np.float32))
         count = idx + 1
         logger.info("capture label=%s path=%s count=%d frames=%d", label, path, count, len(window))
+
+        # DB에 메타데이터 저장
+        try:
+            from datetime import datetime
+            async with AsyncSessionLocal() as db:
+                db.add(DataSample(
+                    id=str(uuid.uuid4()),
+                    label=label,
+                    file_path=path,
+                    frames=len(window),
+                    collected_at=datetime.utcnow(),
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.warning("DB sample save failed: %s", e)
+
         await self._send(CollectAck(label=label, count=count))
 
     async def _load_feedback_refs(self) -> None:

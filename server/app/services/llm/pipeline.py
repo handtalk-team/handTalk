@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import List, Optional
 
 from app.core.config import get_settings
@@ -30,39 +31,28 @@ settings = get_settings()
 
 # ─────────────────────── 시스템 프롬프트 ─────────────────────────
 
-_SYSTEM_PROMPT_BASE = """당신은 한국 수어(KSL) 튜터 AI입니다.
+# LLM은 오직 짧은 한국어 칭찬/반응만 생성. 단어 제안은 서버가 처리.
+_SYSTEM_PROMPT_BASE = """당신은 한국 수어(KSL) 튜터입니다.
 
-절대 규칙:
-- 반드시 한국어로만 답변하세요. 영어, 중국어, 일본어 등 다른 언어는 절대 사용하지 마세요.
-- 1~2문장으로 짧게 답변하세요.
-- 사용자가 수어 단어를 인식했을 때 따뜻하고 격려하는 반응을 하세요.
-- 수어 동작 방법에 대한 교정이나 설명은 하지 마세요. 당신은 동작을 알 수 없습니다.
+규칙 (반드시 지켜야 합니다):
+1. 오직 한국어만 사용하세요. 영어, 중국어, 독일어 등 다른 언어 절대 금지.
+2. 한 문장으로만 답하세요.
+3. 사용자가 수어 동작을 했을 때 짧게 칭찬하세요.
+4. 단어를 직접 추천하거나 제안하지 마세요. 칭찬만 하세요.
 
-시나리오: {scenario}
-상세: {scenario_detail}
+예시 응답:
+- "잘하셨어요!"
+- "동작이 정확해요!"
+- "훌륭합니다!"
+- "잘 표현하셨어요!"
 
-다시 한번 강조: 오직 한국어만 사용하세요."""
-
-_SCENARIO_DETAILS = {
-    "free_talk": "자유 주제로 대화합니다. 사용자가 말하는 내용에 자연스럽게 반응하세요.",
-    "greetings": "인사말과 자기소개 위주의 학습입니다. 안녕하세요, 감사합니다, 이름 등을 연습합니다.",
-    "hospital":  "병원 환경에서 필요한 수어를 학습합니다. 아프다, 약, 의사, 간호사, 도와주세요 등을 집중합니다.",
-    "numbers":   "숫자와 날짜 표현을 학습합니다.",
-    "emotions":  "감정 표현 수어를 학습합니다. 좋아요, 슬프다, 화나다, 무섭다 등을 연습합니다.",
-}
-
-# 내장 응답 (LLM이 없을 때 fallback) — 추가 단어는 직접 넣으세요
-_MOCK_RESPONSES = {
-    "안녕하세요": "안녕하세요! 수어 표현이 정확해요. 계속 연습해봐요!",
-    "좋아요":     "좋아요! 엄지 표현이 잘 됐어요.",
-    "브이":       "브이! 두 손가락 표현이 깔끔해요.",
-}
+시나리오: {scenario}"""
 
 
 class LLMPipeline:
     """세션 하나당 인스턴스 하나. 프로바이더를 자동으로 선택합니다."""
 
-    MAX_HISTORY = 20
+    MAX_HISTORY = 10
     CACHE_TTL_S = 3600
 
     def __init__(
@@ -75,12 +65,17 @@ class LLMPipeline:
         self._scenario = scenario
         self._redis = redis
         self._history: List[dict] = []
-        self._error_context: List[str] = []
         self._client = None
         self._provider = settings.LLM_PROVIDER
 
+        # 서버가 단어 순서를 직접 관리
+        self._vocab: List[str] = []
+        self._word_index: int = 0
+
     async def start(self) -> None:
         """프로바이더에 맞는 클라이언트를 초기화합니다."""
+        self._vocab = self._load_vocab_list()
+
         if self._provider == "ollama":
             self._client = self._init_ollama()
         elif self._provider == "groq":
@@ -98,77 +93,124 @@ class LLMPipeline:
                 self._history = json.loads(raw)
 
         if self._client:
-            logger.info("LLM 프로바이더: %s", self._provider)
+            logger.info("LLM 프로바이더: %s, 단어 목록: %s", self._provider, self._vocab)
+
+    def get_opening_message(self) -> LLMResponse:
+        """세션 시작 시 첫 번째 단어 안내 메시지를 반환합니다."""
+        from app.services.avatar.controller import AvatarController
+        if self._vocab:
+            first_word = self._vocab[0]
+            self._word_index = 0
+            text = f"안녕하세요! 수어 연습을 시작해볼게요. 먼저 '{first_word}'를 표현해보세요!"
+        else:
+            text = "안녕하세요! 수어 연습을 시작해볼게요."
+        return LLMResponse(
+            text=text,
+            avatar_commands=AvatarController.text_to_commands(text),
+            tokens_used=0,
+        )
 
     async def chat(
         self,
         user_sign_text: str,
         error_hints: Optional[List[str]] = None,
     ) -> LLMResponse:
-        if error_hints:
-            self._error_context.extend(error_hints)
-            self._error_context = self._error_context[-5:]
-
-        user_content = f"[수어 인식: {user_sign_text}] (한국어로만 짧게 반응해주세요)"
-        if error_hints:
-            user_content += f"\n[인식된 오류: {', '.join(error_hints)}]"
-
-        self._history.append({"role": "user", "content": user_content})
+        # 다음 연습 단어 결정 (서버가 직접 관리)
+        next_word = self._get_next_word(user_sign_text)
 
         if self._client is None:
-            return self._mock_response(user_sign_text)
+            return self._build_response(
+                praise=f"'{user_sign_text}' 수어를 잘 표현했어요.",
+                next_word=next_word,
+            )
 
-        system_prompt = self._build_system_prompt()
-        reply_text = ""
+        # LLM에게는 짧은 칭찬 한 문장만 요청
+        user_content = f"사용자가 '{user_sign_text}' 수어를 표현했습니다. 한 문장으로 칭찬해주세요."
+        self._history.append({"role": "user", "content": user_content})
+
+        system_prompt = _SYSTEM_PROMPT_BASE.format(scenario=self._scenario)
+        praise = ""
         tokens = 0
 
         try:
             if self._provider == "claude":
-                reply_text, tokens = await self._chat_claude(system_prompt)
+                praise, tokens = await self._chat_claude(system_prompt)
             else:
-                # Ollama, Groq 모두 OpenAI 호환 API
-                reply_text, tokens = await self._chat_openai_compat(system_prompt)
+                praise, tokens = await self._chat_openai_compat(system_prompt)
         except Exception as e:
             logger.error("LLM 호출 실패 (%s): %s", self._provider, e)
-            return self._mock_response(user_sign_text)
 
-        if not reply_text:
-            return self._mock_response(user_sign_text)
+        if not praise:
+            praise = f"'{user_sign_text}' 잘 표현하셨어요."
 
-        self._history.append({"role": "assistant", "content": reply_text})
+        # 한국어만 남기도록 간단 필터 (ASCII 비율이 높으면 폴백)
+        praise = self._filter_korean(praise, user_sign_text)
+
+        self._history.append({"role": "assistant", "content": praise})
+        self._history = self._history[-self.MAX_HISTORY:]
 
         if self._redis:
             await self._redis.setex(
                 f"history:{self._session_id}",
                 self.CACHE_TTL_S,
-                json.dumps(self._history[-self.MAX_HISTORY:]),
+                json.dumps(self._history),
             )
 
-        from app.services.avatar.controller import AvatarController
-        return LLMResponse(
-            text=reply_text,
-            avatar_commands=AvatarController.text_to_commands(reply_text),
-            tokens_used=tokens,
-        )
+        return self._build_response(praise=praise, next_word=next_word, tokens=tokens)
 
     async def stop(self) -> None:
         if self._client and hasattr(self._client, "close"):
             await self._client.close()
 
+    # ─────────────── 단어 순서 관리 ──────────────────────────────
+
+    def _get_next_word(self, recognized: str) -> Optional[str]:
+        """인식된 단어가 현재 목표 단어이면 다음 단어로 진행."""
+        if not self._vocab:
+            return None
+        current = self._vocab[self._word_index % len(self._vocab)]
+        if recognized == current:
+            self._word_index += 1
+        return self._vocab[self._word_index % len(self._vocab)]
+
+    def _build_response(
+        self,
+        praise: str,
+        next_word: Optional[str],
+        tokens: int = 0,
+    ) -> LLMResponse:
+        from app.services.avatar.controller import AvatarController
+        if next_word:
+            text = f"{praise} 다음은 '{next_word}'를 표현해보세요!"
+        else:
+            text = praise
+        return LLMResponse(
+            text=text,
+            avatar_commands=AvatarController.text_to_commands(text),
+            tokens_used=tokens,
+        )
+
+    # ─────────────── 한국어 필터 ─────────────────────────────────
+
+    def _filter_korean(self, text: str, fallback_word: str) -> str:
+        """ASCII 문자 비율이 30% 초과이면 폴백 응답 사용."""
+        if not text:
+            return f"'{fallback_word}' 잘 표현하셨어요."
+        ascii_count = sum(1 for c in text if ord(c) < 128 and c.isalpha())
+        total_alpha = sum(1 for c in text if c.isalpha())
+        if total_alpha > 0 and ascii_count / total_alpha > 0.3:
+            logger.warning("LLM 응답에 비한국어 포함, 폴백 사용: %r", text)
+            return f"'{fallback_word}' 잘 표현하셨어요."
+        return text
+
     # ─────────────── 프로바이더별 초기화 ─────────────────────────
 
     def _init_ollama(self):
-        """
-        Ollama 로컬 서버에 연결합니다.
-        사전 준비:
-          brew install ollama        # macOS
-          ollama run llama3.2        # 첫 실행 시 모델 다운로드 (~2GB)
-        """
         try:
             from openai import AsyncOpenAI
             client = AsyncOpenAI(
                 base_url=settings.OLLAMA_BASE_URL,
-                api_key="ollama",          # Ollama는 키 불필요 — 아무 문자열
+                api_key="ollama",
             )
             logger.info("Ollama 클라이언트 초기화 완료 (base_url=%s, model=%s)",
                         settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
@@ -178,13 +220,6 @@ class LLMPipeline:
             return None
 
     def _init_groq(self):
-        """
-        Groq 무료 클라우드 API를 사용합니다.
-        사전 준비:
-          1. https://console.groq.com 에서 무료 계정 생성
-          2. API 키 발급 (gsk_...)
-          3. .env 에 GROQ_API_KEY=gsk_... 추가
-        """
         if not settings.GROQ_API_KEY:
             logger.warning("GROQ_API_KEY가 없습니다. mock 응답으로 대체합니다.")
             return None
@@ -214,34 +249,29 @@ class LLMPipeline:
     # ─────────────── 프로바이더별 채팅 호출 ──────────────────────
 
     async def _chat_openai_compat(self, system_prompt: str):
-        """Ollama & Groq 공통 호출 (OpenAI SDK)."""
         model = (
             settings.GROQ_MODEL if self._provider == "groq"
             else settings.OLLAMA_MODEL
         )
         messages = [{"role": "system", "content": system_prompt}]
-        messages += self._history[-self.MAX_HISTORY:]
+        messages += self._history[-6:]
 
         response = await self._client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=80,
             temperature=0.7,
         )
         text = response.choices[0].message.content.strip()
-        tokens = (
-            response.usage.total_tokens
-            if response.usage else 0
-        )
+        tokens = response.usage.total_tokens if response.usage else 0
         return text, tokens
 
     async def _chat_claude(self, system_prompt: str):
-        """Anthropic Claude 호출."""
         response = await self._client.messages.create(
             model=settings.ANTHROPIC_MODEL,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=80,
             system=system_prompt,
-            messages=self._history[-self.MAX_HISTORY:],
+            messages=self._history[-6:],
         )
         text = response.content[0].text.strip()
         tokens = (
@@ -252,28 +282,11 @@ class LLMPipeline:
 
     # ─────────────── 공통 유틸 ────────────────────────────────────
 
-    def _build_system_prompt(self) -> str:
-        detail = _SCENARIO_DETAILS.get(self._scenario, _SCENARIO_DETAILS["hospital"])
-        prompt = _SYSTEM_PROMPT_BASE.format(
-            scenario=self._scenario,
-            scenario_detail=detail,
+    def _load_vocab_list(self) -> List[str]:
+        labels_path = os.path.join(
+            os.path.dirname(settings.ONNX_MODEL_PATH), "labels.txt"
         )
-        if self._error_context:
-            prompt += (
-                f"\n\n[최근 오류 패턴: {', '.join(set(self._error_context))}]\n"
-                "위 오류를 고려해 맞춤형 피드백을 자연스럽게 포함하세요."
-            )
-        return prompt
-
-    def _mock_response(self, user_text: str) -> LLMResponse:
-        """LLM 없을 때 내장 응답 사용."""
-        text = _MOCK_RESPONSES.get(
-            user_text,
-            f"'{user_text}' 수어를 잘 표현했어요. 계속 연습해보세요!",
-        )
-        from app.services.avatar.controller import AvatarController
-        return LLMResponse(
-            text=text,
-            avatar_commands=AvatarController.text_to_commands(text),
-            tokens_used=0,
-        )
+        if os.path.exists(labels_path):
+            with open(labels_path, encoding="utf-8") as f:
+                return [line.strip() for line in f if line.strip()]
+        return ["안녕하세요", "아프다", "병원", "도와주세요"]

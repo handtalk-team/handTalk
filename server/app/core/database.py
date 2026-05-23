@@ -19,7 +19,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 async def init_db() -> None:
     from app.models.domain.user import Base as UserBase
-    from app.models.domain.session import Base  # noqa: F401 — registers Session models
+    from app.models.domain.session import Base, DataSample, LearningSession, SignAttempt  # noqa
 
     async with engine.begin() as conn:
         await conn.run_sync(UserBase.metadata.create_all)

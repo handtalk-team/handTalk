@@ -6,6 +6,16 @@ from sqlalchemy.orm import relationship
 from .user import Base
 
 
+class DataSample(Base):
+    __tablename__ = "data_samples"
+
+    id         = Column(String, primary_key=True)
+    label      = Column(String, nullable=False, index=True)
+    file_path  = Column(String, nullable=False)
+    frames     = Column(Integer, nullable=False)   # T (시퀀스 길이)
+    collected_at = Column(DateTime, default=datetime.utcnow)
+
+
 class LearningSession(Base):
     __tablename__ = "learning_sessions"
 
