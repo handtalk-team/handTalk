@@ -17,8 +17,8 @@ Approach
 3.  For each new camera frame we find the closest glove packet (within
     MAX_GLOVE_LAG_S seconds) and pair them.  If no glove packet is
     available we use the last known glove state (hold-last-value).
-4.  Feature-level fusion: vision → 63-D vector, glove → 14-D vector,
-    concatenated → 77-D fused vector.
+4.  Feature-level fusion: vision → 126-D vector (양손), glove → 14-D vector,
+    concatenated → 140-D fused vector.
 5.  Dynamic weighting: confidence scores gate each modality's contribution.
     If vision confidence < VISION_MIN we zero-pad vision features so the
     model learns not to rely on them.  Same for glove.
@@ -44,9 +44,10 @@ settings = get_settings()
 # as "contemporaneous" with a camera frame.
 MAX_GLOVE_LAG_S: float = 0.10  # 100 ms
 
-VISION_DIM = 63   # 21 landmarks × 3 (x, y, z)
-GLOVE_DIM = 14    # 5 flex + 3 accel + 3 gyro + 3 euler-from-quat
-FUSED_DIM = VISION_DIM + GLOVE_DIM   # 77
+VISION_DIM_PER_HAND = 63   # 21 landmarks × 3 (x, y, z)
+VISION_DIM = 126           # 양손: 63 × 2
+GLOVE_DIM = 14             # 5 flex + 3 accel + 3 gyro + 3 euler-from-quat
+FUSED_DIM = VISION_DIM + GLOVE_DIM   # 140
 
 
 @dataclass
@@ -95,7 +96,7 @@ class SensorFusionModule:
             self._glove_ring.append(snap)
             self._last_glove = snap
 
-        vision_feat, v_conf = self._extract_vision(frame.camera)
+        vision_feat, v_conf = self._extract_vision(frame.camera, frame.camera_left)
         glove_feat, g_conf, is_mock = self._extract_glove(frame.timestamp)
 
         v_w, g_w = self._compute_weights(v_conf, g_conf)
@@ -156,20 +157,31 @@ class SensorFusionModule:
     # ─────────────────────── internals ──────────────────────────
 
     def _extract_vision(
+        self,
+        right: Optional[VisionData],
+        left: Optional[VisionData],
+    ) -> Tuple[np.ndarray, float]:
+        right_feat, r_conf = self._extract_one_hand(right)
+        left_feat, l_conf = self._extract_one_hand(left)
+        combined = np.concatenate([right_feat, left_feat]).astype(np.float32)
+        # 신뢰도: 두 손 중 높은 쪽 기준
+        confidence = max(r_conf, l_conf)
+        return combined, confidence
+
+    def _extract_one_hand(
         self, vision: Optional[VisionData]
     ) -> Tuple[np.ndarray, float]:
         if vision is None:
-            return np.zeros(VISION_DIM, dtype=np.float32), 0.0
+            return np.zeros(VISION_DIM_PER_HAND, dtype=np.float32), 0.0
 
         coords: List[float] = []
         for lm in vision.landmarks:
             coords.extend([lm.x, lm.y, lm.z])
 
-        # Normalise: subtract wrist (landmark 0) so the vector is
-        # translation-invariant (hand position in frame doesn't matter)
+        # Normalise: subtract wrist (landmark 0) — translation-invariant
         arr = np.array(coords, dtype=np.float32)
         wrist = arr[:3]
-        arr = arr - np.tile(wrist, VISION_DIM // 3)
+        arr = arr - np.tile(wrist, VISION_DIM_PER_HAND // 3)
 
         return arr, float(vision.confidence)
 

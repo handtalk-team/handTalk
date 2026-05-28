@@ -121,3 +121,9 @@ class CollectAck(BaseModel):
     type: Literal["collect_ack"] = "collect_ack"
     label: str
     count: int
+
+
+class GloveStatus(BaseModel):
+    type: Literal["glove_status"] = "glove_status"
+    right: Optional[dict] = None   # GloveData dict or None
+    left: Optional[dict] = None

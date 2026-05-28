@@ -111,7 +111,7 @@ class WebcamVisionCapture(VisionCaptureInterface):
         options = mp_vision.HandLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=model_path),
             running_mode=mp_vision.RunningMode.IMAGE,
-            num_hands=1,
+            num_hands=2,
             min_hand_detection_confidence=0.5,
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
@@ -183,7 +183,8 @@ class ClientVisionCapture(VisionCaptureInterface):
     """
 
     def __init__(self) -> None:
-        self._latest: Optional[VisionData] = None
+        self._latest: Optional[VisionData] = None        # 오른손
+        self._latest_left: Optional[VisionData] = None   # 왼손
 
     async def start(self) -> None:
         pass
@@ -196,3 +197,6 @@ class ClientVisionCapture(VisionCaptureInterface):
 
     def update(self, vision_data: Optional[VisionData]) -> None:
         self._latest = vision_data
+
+    def update_left(self, vision_data: Optional[VisionData]) -> None:
+        self._latest_left = vision_data

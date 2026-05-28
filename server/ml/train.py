@@ -24,7 +24,7 @@ MODEL_DIR  = "ml/models"
 ONNX_PATH  = os.path.join(MODEL_DIR, "sign_recognizer.onnx")
 LABELS_PATH = os.path.join(MODEL_DIR, "labels.txt")
 
-INPUT_DIM  = 63   # vision landmarks only (77차원 중 앞 63개)
+INPUT_DIM  = 126  # 양손 vision landmarks (21×3×2)
 HIDDEN_DIM = 128
 NUM_LAYERS = 2
 DROPOUT    = 0.3
@@ -46,7 +46,7 @@ class SignDataset(Dataset):
                 if not fname.endswith(".npy"):
                     continue
                 arr = np.load(os.path.join(label_dir, fname))  # (T, 77)
-                arr = arr[:, :INPUT_DIM].astype(np.float32)    # (T, 63)
+                arr = arr[:, :INPUT_DIM].astype(np.float32)    # (T, 126)
                 arr = self._pad_or_trim(arr)
                 self.samples.append((torch.tensor(arr), idx))
 

@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     CAMERA_HEIGHT: int = 480
     CAMERA_FPS: int = 30
 
+    # ── Glove (USB Serial) ────────────────────────────────────────────────────
+    # Serial port for the ESP32 right-hand glove.  Leave empty to disable.
+    # macOS example: /dev/cu.usbserial-0001
+    # Linux example: /dev/ttyUSB0
+    GLOVE_PORT_RIGHT: str = ""
+    GLOVE_PORT_LEFT: str = ""
+    GLOVE_BAUD_RATE: int = 115200
+
     # ── Mock glove ────────────────────────────────────────────────────────────
     # Hz at which the mock glove generates packets
     MOCK_GLOVE_HZ: int = 50

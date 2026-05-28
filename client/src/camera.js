@@ -57,8 +57,8 @@ export class CameraCapture {
     this.#hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.3,  // 낮출수록 장갑 착용 시에도 감지됨
+      minTrackingConfidence: 0.3,
     });
     this.#hands.onResults((results) => this.#onResults(results));
 
@@ -85,34 +85,31 @@ export class CameraCapture {
     this.#ctx.save();
     this.#ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
 
-    let visionData = null;
+    let right = null;
+    let left  = null;
 
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      // Draw all detected hands
+    if (results.multiHandLandmarks?.length > 0) {
       results.multiHandLandmarks.forEach((lms, i) => {
-        const color = i === 0 ? '#7c6af7' : '#f59e0b';
+        const label = results.multiHandedness?.[i]?.label ?? 'Right';
+        const color = label === 'Right' ? '#7c6af7' : '#f87171';
         drawConnectors(this.#ctx, lms, HAND_CONNECTIONS, { color, lineWidth: 2 });
         drawLandmarks(this.#ctx, lms, { color, lineWidth: 1, radius: 3 });
+
+        const wlms = results.multiHandWorldLandmarks?.[i] ?? lms;
+        const conf = results.multiHandedness?.[i]?.score ?? 0.9;
+        const data = {
+          landmarks:       lms.map(p => ({ x: p.x, y: p.y, z: p.z })),
+          world_landmarks: wlms.map(p => ({ x: p.x, y: p.y, z: p.z })),
+          confidence:      conf,
+          handedness:      label,
+          fps:             30,
+        };
+        if (label === 'Right') right = data;
+        else                   left  = data;
       });
-
-      // Send the most confident hand to the server (or right hand preferred)
-      const idx = results.multiHandedness?.findIndex(h => h.label === 'Right') ?? 0;
-      const best = Math.max(0, idx);
-      const lms  = results.multiHandLandmarks[best];
-      const wlms = results.multiHandWorldLandmarks?.[best] ?? lms;
-      const hand = results.multiHandedness?.[best]?.label ?? 'Right';
-      const conf = results.multiHandedness?.[best]?.score ?? 0.9;
-
-      visionData = {
-        landmarks:       lms.map(p => ({ x: p.x, y: p.y, z: p.z })),
-        world_landmarks: wlms.map(p => ({ x: p.x, y: p.y, z: p.z })),
-        confidence:      conf,
-        handedness:      hand,
-        fps:             30,
-      };
     }
 
     this.#ctx.restore();
-    this.#callback?.(visionData);
+    this.#callback?.({ right, left });
   }
 }

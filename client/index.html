@@ -293,60 +293,43 @@
     </div>
 
     <div>
-      <div class="section-title">글러브 센서 (Flex)</div>
-      <div class="glove-grid">
-        <div class="finger-bar">
-          <div class="finger-track"><div class="finger-fill" id="f0"></div></div>
-          <span>엄지</span>
-        </div>
-        <div class="finger-bar">
-          <div class="finger-track"><div class="finger-fill" id="f1"></div></div>
-          <span>검지</span>
-        </div>
-        <div class="finger-bar">
-          <div class="finger-track"><div class="finger-fill" id="f2"></div></div>
-          <span>중지</span>
-        </div>
-        <div class="finger-bar">
-          <div class="finger-track"><div class="finger-fill" id="f3"></div></div>
-          <span>약지</span>
-        </div>
-        <div class="finger-bar">
-          <div class="finger-track"><div class="finger-fill" id="f4"></div></div>
-          <span>새끼</span>
-        </div>
-      </div>
-    </div>
+      <div class="section-title">글러브 센서</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
 
-    <div>
-      <div class="section-title">IMU (가속도 / 자이로)</div>
-      <div class="imu-row">
-        <div class="imu-chip">
-          <div class="imu-label">Accel X</div>
-          <div class="imu-val" id="ax">0.00</div>
+        <!-- 왼손 (빨간) -->
+        <div style="background:#1a1d2a;border-radius:8px;padding:8px;">
+          <div style="font-size:0.7rem;font-weight:700;text-align:center;margin-bottom:6px;color:#f87171;">왼손 L</div>
+          <div class="glove-grid">
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="lf0" style="background:linear-gradient(to top,#ef4444,#f87171)"></div></div><span>엄지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="lf1" style="background:linear-gradient(to top,#ef4444,#f87171)"></div></div><span>검지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="lf2" style="background:linear-gradient(to top,#ef4444,#f87171)"></div></div><span>중지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="lf3" style="background:linear-gradient(to top,#ef4444,#f87171)"></div></div><span>약지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="lf4" style="background:linear-gradient(to top,#ef4444,#f87171)"></div></div><span>새끼</span></div>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+            <div class="imu-chip"><div class="imu-label">Ax</div><div class="imu-val" id="lax">—</div></div>
+            <div class="imu-chip"><div class="imu-label">Ay</div><div class="imu-val" id="lay">—</div></div>
+            <div class="imu-chip"><div class="imu-label">Az</div><div class="imu-val" id="laz">—</div></div>
+          </div>
         </div>
-        <div class="imu-chip">
-          <div class="imu-label">Accel Y</div>
-          <div class="imu-val" id="ay">0.00</div>
+
+        <!-- 오른손 (보라) -->
+        <div style="background:#1a1d2a;border-radius:8px;padding:8px;">
+          <div style="font-size:0.7rem;font-weight:700;text-align:center;margin-bottom:6px;color:#a78bfa;">오른손 R</div>
+          <div class="glove-grid">
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="rf0"></div></div><span>엄지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="rf1"></div></div><span>검지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="rf2"></div></div><span>중지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="rf3"></div></div><span>약지</span></div>
+            <div class="finger-bar"><div class="finger-track"><div class="finger-fill" id="rf4"></div></div><span>새끼</span></div>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+            <div class="imu-chip"><div class="imu-label">Ax</div><div class="imu-val" id="rax">—</div></div>
+            <div class="imu-chip"><div class="imu-label">Ay</div><div class="imu-val" id="ray">—</div></div>
+            <div class="imu-chip"><div class="imu-label">Az</div><div class="imu-val" id="raz">—</div></div>
+          </div>
         </div>
-        <div class="imu-chip">
-          <div class="imu-label">Accel Z</div>
-          <div class="imu-val" id="az">9.81</div>
-        </div>
-      </div>
-      <div class="imu-row" style="margin-top:6px">
-        <div class="imu-chip">
-          <div class="imu-label">Gyro X</div>
-          <div class="imu-val" id="gx">0.000</div>
-        </div>
-        <div class="imu-chip">
-          <div class="imu-label">Gyro Y</div>
-          <div class="imu-val" id="gy">0.000</div>
-        </div>
-        <div class="imu-chip">
-          <div class="imu-label">Gyro Z</div>
-          <div class="imu-val" id="gz">0.000</div>
-        </div>
+
       </div>
     </div>
 
@@ -438,6 +421,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-<script type="module" src="src/app.js?v=10"></script>
+<script type="module" src="src/app.js?v=14"></script>
 </body>
 </html>

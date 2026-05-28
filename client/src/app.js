@@ -14,11 +14,11 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=6';
+import { CameraCapture } from './camera.js?v=7';
 import { WSClient } from './websocket_client.js';
-import { UI } from './ui.js';
+import { UI } from './ui.js?v=14';
 
-const WS_URL = `ws://${location.host}/ws`;
+const WS_URL = `ws://localhost:8000/ws`;
 
 // ─── instantiate ───────────────────────────────────────────────
 // glove = null  →  vision-only mode
@@ -64,6 +64,10 @@ ws.on('message', (msg) => {
       sessionActive = false;
       ui.setSessionButtons(false);
       break;
+    case 'glove_status':
+      ui.updateGloveDisplay(msg.right, msg.left);
+      ui.setGloveBadge(!!(msg.right || msg.left));
+      break;
     case 'collect_ack':
       onCollectAck(msg);
       break;
@@ -76,7 +80,7 @@ ws.on('message', (msg) => {
 });
 
 // ─── Camera frame callback (~30 Hz) ────────────────────────────
-camera.onFrame(async (visionData) => {
+camera.onFrame(async ({ right, left }) => {
   // FPS tracking
   fpsCounter++;
   const now = performance.now();
@@ -87,14 +91,10 @@ camera.onFrame(async (visionData) => {
     fpsTime = now;
   }
 
-  // Always update the confidence bar (even outside sessions)
-  if (visionData) {
-    ui.setVisionConfidence(visionData.confidence);
-    if (sessionActive) ui.setHandDetecting(true);
-  } else {
-    ui.setVisionConfidence(0);
-    if (sessionActive) ui.setHandDetecting(false);
-  }
+  // Confidence bar: 두 손 중 높은 쪽 기준
+  const bestConf = Math.max(right?.confidence ?? 0, left?.confidence ?? 0);
+  ui.setVisionConfidence(bestConf);
+  if (sessionActive) ui.setHandDetecting(!!(right || left));
 
   if (!sessionActive || !ws.isOpen()) {
     if (sessionActive) console.warn('[handTalk] frame skipped — ws not open', ws.isOpen());
@@ -107,7 +107,8 @@ camera.onFrame(async (visionData) => {
       timestamp: Date.now() / 1000,
       sequence: frameSeq++,
       session_id: ws.sessionId ?? 'unknown',
-      camera: visionData,
+      camera:      right ?? null,
+      camera_left: left  ?? null,
       glove: glove ? glove.read() : null,
     },
   };

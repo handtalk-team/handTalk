@@ -68,5 +68,7 @@ class SensorFrame(BaseModel):
     # Frame counter assigned by the client (camera fps reference)
     sequence: int
     session_id: str
-    camera: Optional[VisionData] = None
-    glove: Optional[GloveData] = None
+    camera: Optional[VisionData] = None        # 오른손
+    camera_left: Optional[VisionData] = None   # 왼손
+    glove: Optional[GloveData] = None          # 오른손 글러브
+    glove_left: Optional[GloveData] = None     # 왼손 글러브

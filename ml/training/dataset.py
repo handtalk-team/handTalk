@@ -4,17 +4,20 @@ HandTalk Dataset
 
 Directory layout expected
 --------------------------
-ml/data/raw/{label}/{recording_id}.npy   — (T, 77) float32 fused feature array
+ml/data/raw/{label}/{recording_id}.npy   — (T, 140) float32 fused feature array
 ml/data/references/{label}.npy           — mean reference array for DTW feedback
 
 Each .npy file is one sign attempt:
-  axis-0 (T) : number of frames (variable, ~30-90 for 1-3 second gestures)
-  axis-1 (77): fused feature vector
-                 [0:63]  vision landmarks  (21 × 3)
-                 [63:68] flex sensors      (5)
-                 [68:71] accelerometer     (3)
-                 [71:74] gyroscope         (3)
-                 [74:77] euler angles      (3)
+  axis-0 (T)  : number of frames (variable, ~30-90 for 1-3 second gestures)
+  axis-1 (140): fused feature vector
+                 [0:63]    오른손 vision landmarks (21 × 3)
+                 [63:126]  왼손   vision landmarks (21 × 3)
+                 [126:131] flex sensors      (5)
+                 [131:134] accelerometer     (3)
+                 [134:137] gyroscope         (3)
+                 [137:140] euler angles      (3)
+
+  모델 입력은 vision 부분만 사용: arr[:, :126]
 
 Data collection
 ---------------
@@ -44,18 +47,17 @@ from torch.utils.data import Dataset
 
 SIGN_VOCAB = {
     "안녕하세요": 0,
-    "감사합니다":  1,
-    "아프다":     2,
-    "약":         3,
-    "의사":       4,
-    "간호사":     5,
-    "도와주세요": 6,
-    "화장실":     7,
-    "물":         8,
-    "괜찮아요":   9,
+    "아프다":     1,
+    "병원":       2,
+    "도와주세요": 3,
+    "괜찮다":     4,
+    "수술":       5,
+    "응급":       6,
+    "치료":       7,
+    "건강하다":   8,
 }
 
-DATA_DIR = Path("ml/data/raw")
+DATA_DIR = Path("ml/data")
 
 
 def _time_warp(seq: np.ndarray, factor_range=(0.8, 1.2)) -> np.ndarray:
@@ -131,6 +133,7 @@ class SignDataset(Dataset):
 
             for f in chosen:
                 arr = np.load(str(f)).astype(np.float32)
+                arr = arr[:, :126]   # vision(양손) 126D만 사용, glove 제외
                 self.samples.append((arr, class_idx))
 
     def __len__(self) -> int:

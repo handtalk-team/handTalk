@@ -53,8 +53,8 @@ DROPOUT       = 0.3
 LABEL_SMOOTH  = 0.1
 PATIENCE      = 15          # early stopping
 WINDOW_T      = 60          # frames per sample
-NUM_CLASSES   = 10
-INPUT_DIM     = 77
+NUM_CLASSES   = 9
+INPUT_DIM     = 126   # 양손 vision landmarks: 21 × 3 × 2
 HIDDEN_DIM    = 128
 NUM_LAYERS    = 2
 

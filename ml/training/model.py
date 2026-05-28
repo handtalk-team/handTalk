@@ -4,14 +4,14 @@ BiGRU + Self-Attention Sign Language Recognition Model
 
 Why this architecture for 10 words × 300 samples
 --------------------------------------------------
-- MediaPipe already extracts 63-D spatial features → CNN not needed
+- MediaPipe already extracts landmarks → CNN not needed
 - GRU has fewer parameters than LSTM (less overfitting on small data)
 - Bidirectional: forward pass captures onset, backward pass captures release
 - Self-attention: learns which frames in the 2-second window matter most
   (e.g., the peak of the gesture matters more than the transition frames)
 - ~120K parameters total → trains in minutes on a CPU
 
-Input  : (batch, T=60, D=77)   T can vary at inference via pack_padded_sequence
+Input  : (batch, T=60, D=126)  양손 vision landmarks (21×3×2)
 Output : (batch, num_classes)  raw logits
 
 Export to ONNX
@@ -57,7 +57,7 @@ class SignRecognizer(nn.Module):
 
     Architecture
     ------------
-    Input projection  : 77 → 128
+    Input projection  : 126 → 128
     BiGRU × 2 layers : 128 → 256 hidden (2 × 128)
     Self-attention    : 256 → 256
     Global avg pool   : T → 1
@@ -66,7 +66,7 @@ class SignRecognizer(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 77,
+        input_dim: int = 126,
         hidden_dim: int = 128,
         num_layers: int = 2,
         num_classes: int = 10,
@@ -106,14 +106,14 @@ class SignRecognizer(nn.Module):
         """
         Parameters
         ----------
-        x : (B, T, 77)
+        x : (B, T, 126)
 
         Returns
         -------
         logits : (B, num_classes)
         """
         # Project to hidden dim
-        h = self.input_proj(x)              # (B, T, 128)
+        h = self.input_proj(x)              # (B, T, 128)  x: (B, T, 126)
 
         # BiGRU
         gru_out, _ = self.bigru(h)          # (B, T, 256)
@@ -133,7 +133,7 @@ class SignRecognizer(nn.Module):
     def export_onnx(self, path: str = "ml/models/sign_recognizer.onnx") -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.eval()
-        dummy = torch.zeros(1, 60, 77)
+        dummy = torch.zeros(1, 60, 126)
         torch.onnx.export(
             self,
             dummy,
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default=None)
     args = parser.parse_args()
 
-    model = SignRecognizer()
+    model = SignRecognizer(input_dim=126)
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     if args.checkpoint:

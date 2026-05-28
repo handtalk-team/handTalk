@@ -191,7 +191,11 @@ class HybridRecognitionEngine:
 
         Returns None when the gesture doesn't match a known sign.
         """
-        lm = window[:, :63].mean(axis=0).reshape(21, 3)
+        right = window[:, :63].mean(axis=0).reshape(21, 3)
+        left  = window[:, 63:126].mean(axis=0).reshape(21, 3)
+        # 오른손 데이터가 있으면 오른손 사용, 없으면 왼손으로 폴백
+        right_active = bool(np.any(right != 0))
+        lm = right if right_active else left
 
         extended = [lm[t, 1] < lm[p, 1] for t, p in zip(_TIPS, _PIPS)]
         thumb, index, middle, ring, pinky = extended
@@ -213,7 +217,7 @@ class HybridRecognitionEngine:
 
     def _glove_rule_infer(self, window: np.ndarray) -> Optional[Tuple[str, float]]:
         """Flex-sensor heuristic when glove is connected but ONNX absent."""
-        flex = window[:, 63:68].mean(axis=0)
+        flex = window[:, 126:131].mean(axis=0)   # 새 레이아웃: [126:131]=flex
         total_bend = float(flex.sum())
 
         if total_bend < 0.3:
@@ -225,10 +229,10 @@ class HybridRecognitionEngine:
         return None
 
     def _onnx_infer(self, window: np.ndarray) -> Tuple[str, float]:
-        # 모델은 앞 63차원(vision landmarks)만 사용, SEQ_LEN=60으로 패딩/자르기
-        seq = window[:, :63]
+        # 앞 126차원(양손 vision landmarks) 사용, SEQ_LEN=60으로 패딩/자르기
+        seq = window[:, :126]
         if len(seq) < 60:
-            pad = np.zeros((60 - len(seq), 63), dtype=np.float32)
+            pad = np.zeros((60 - len(seq), 126), dtype=np.float32)
             seq = np.concatenate([seq, pad], axis=0)
         else:
             seq = seq[:60]
@@ -247,16 +251,16 @@ class HybridRecognitionEngine:
     def _compute_motion_energy(self, ff: FusedFrame) -> float:
         """
         Returns a motion proxy scalar.
-        - Glove present : L2 norm of gyro channels (indices 71-73)
+        - Glove present : L2 norm of gyro channels (indices 134-136, 새 레이아웃)
         - Vision only   : frame-to-frame velocity of landmark centroid
         """
-        gyro = ff.fused_features[71:74]
+        gyro = ff.fused_features[134:137]   # [0:126]=vision, [126:131]=flex, [131:134]=accel, [134:137]=gyro
         gyro_norm = float(np.linalg.norm(gyro))
         if gyro_norm > 1e-4:
             return gyro_norm
 
-        # Vision velocity: displacement of all landmarks between frames
-        vision = ff.fused_features[:63]
+        # Vision velocity: displacement of all landmarks between frames (양손 126D)
+        vision = ff.fused_features[:126]
         if self._prev_vision is not None:
             delta = float(np.linalg.norm(vision - self._prev_vision))
             self._prev_vision = vision.copy()

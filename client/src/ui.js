@@ -24,6 +24,12 @@ export class UI {
     this.#wsBadge.className   = connected ? 'badge badge-live' : 'badge badge-dis';
   }
 
+  setGloveBadge(connected) {
+    const el = document.getElementById('gloveBadge');
+    el.textContent  = connected ? '글러브: 연결됨' : '글러브: 미연결';
+    el.className    = connected ? 'badge badge-live' : 'badge badge-dis';
+  }
+
   setSessionButtons(active) {
     document.getElementById('btnStart').disabled = active;
     document.getElementById('btnEnd').disabled   = !active;
@@ -45,21 +51,32 @@ export class UI {
     document.getElementById('confVisionVal').textContent = `${pct}%`;
   }
 
-  updateGloveDisplay(g) {
-    if (!g) return;
-    g.flex.forEach((v, i) => {
-      document.getElementById(`f${i}`).style.height = `${Math.round(v * 100)}%`;
-    });
+  updateGloveDisplay(right, left) {
     const fmt = (v) => (v >= 0 ? '+' : '') + v.toFixed(2);
-    document.getElementById('ax').textContent = fmt(g.imu.accel[0]);
-    document.getElementById('ay').textContent = fmt(g.imu.accel[1]);
-    document.getElementById('az').textContent = fmt(g.imu.accel[2]);
-    document.getElementById('gx').textContent = g.imu.gyro[0].toFixed(3);
-    document.getElementById('gy').textContent = g.imu.gyro[1].toFixed(3);
-    document.getElementById('gz').textContent = g.imu.gyro[2].toFixed(3);
-    const q = Math.round(g.ble_quality * 100);
-    document.getElementById('confGloveBar').style.width = `${q}%`;
-    document.getElementById('confGloveVal').textContent = `${q}%`;
+
+    const applyPanel = (g, prefix) => {
+      if (!g) return;
+      g.flex.forEach((v, i) => {
+        const el = document.getElementById(`${prefix}f${i}`);
+        if (el) el.style.height = `${Math.round(v * 100)}%`;
+      });
+      const ax = document.getElementById(`${prefix}ax`);
+      const ay = document.getElementById(`${prefix}ay`);
+      const az = document.getElementById(`${prefix}az`);
+      if (ax) ax.textContent = fmt(g.imu.accel[0]);
+      if (ay) ay.textContent = fmt(g.imu.accel[1]);
+      if (az) az.textContent = fmt(g.imu.accel[2]);
+    };
+
+    applyPanel(right, 'r');
+    applyPanel(left,  'l');
+
+    const best = right ?? left;
+    if (best) {
+      const q = Math.round(best.ble_quality * 100);
+      document.getElementById('confGloveBar').style.width = `${q}%`;
+      document.getElementById('confGloveVal').textContent = `${q}%`;
+    }
   }
 
   addSystemMsg(text, level = 'info') {
