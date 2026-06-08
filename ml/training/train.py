@@ -46,49 +46,59 @@ from .model import SignRecognizer
 
 # ─── Hyper-parameters ────────────────────────────────────────────
 BATCH_SIZE    = 32
-EPOCHS        = 100
-LR            = 1e-3
+EPOCHS        = 150
+LR            = 3e-4          # Transformer는 낮은 LR 선호
 WEIGHT_DECAY  = 1e-4
 DROPOUT       = 0.3
 LABEL_SMOOTH  = 0.1
-PATIENCE      = 15          # early stopping
-WINDOW_T      = 60          # frames per sample
-NUM_CLASSES   = 9
-INPUT_DIM     = 126   # 양손 vision landmarks: 21 × 3 × 2
-HIDDEN_DIM    = 128
-NUM_LAYERS    = 2
+PATIENCE      = 20
+WINDOW_T      = 60
+INPUT_DIM     = 272   # 136 raw + 136 velocity
+# Transformer 하이퍼파라미터
+D_MODEL       = 256
+NHEAD         = 4
+NUM_LAYERS    = 3
+DIM_FF        = 512
 
 
 def train(args) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    data_dir  = Path(args.data_dir)
+    model_dir = Path(args.model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
     # ── Data ─────────────────────────────────────────────────────
-    train_ds = SignDataset(split="train", augment=True,  window_T=WINDOW_T)
-    val_ds   = SignDataset(split="val",   augment=False, window_T=WINDOW_T)
+    train_ds = SignDataset(split="train", augment=True,  window_T=WINDOW_T, data_dir=data_dir)
+    val_ds   = SignDataset(split="val",   augment=False, window_T=WINDOW_T, data_dir=data_dir)
 
     if len(train_ds) == 0:
         print(
-            "\n[ERROR] No training data found.\n"
-            "Collect samples first:\n"
-            "  python -m ml.training.collect\n"
-            "Then run training again."
+            f"\n[ERROR] No training data found in {data_dir}\n"
+            "Run the extractor first:\n"
+            "  python -m ml.preprocessing.extract_aihub --keypoint ... --morpheme ... --output <data_dir>\n"
         )
         return
 
-    print(f"Train: {len(train_ds)} samples | Val: {len(val_ds)} samples")
+    num_classes = train_ds.num_classes
+    print(f"Train: {len(train_ds)} | Val: {len(val_ds)} | Classes: {num_classes} | Data: {data_dir}")
 
+    # Colab/멀티프로세스 환경에 따라 num_workers 자동 설정
+    nw = min(2, args.num_workers)
     train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
-                          num_workers=2, pin_memory=True)
+                          num_workers=nw, pin_memory=(device.type == "cuda"))
     val_dl   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,
-                          num_workers=2, pin_memory=True)
+                          num_workers=nw, pin_memory=(device.type == "cuda"))
 
     # ── Model ─────────────────────────────────────────────────────
     model = SignRecognizer(
         input_dim=INPUT_DIM,
-        hidden_dim=HIDDEN_DIM,
+        d_model=D_MODEL,
+        nhead=NHEAD,
         num_layers=NUM_LAYERS,
-        num_classes=NUM_CLASSES,
+        dim_ff=DIM_FF,
+        num_classes=num_classes,
         dropout=DROPOUT,
     ).to(device)
 
@@ -113,9 +123,9 @@ def train(args) -> None:
     )
 
     # ── Logging ───────────────────────────────────────────────────
-    ckpt_dir = Path("ml/models/checkpoints")
+    ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    log_path = Path("ml/models/training_log.csv")
+    log_path = model_dir / "training_log.csv"
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "lr"])
 
@@ -177,13 +187,11 @@ def train(args) -> None:
 
         # Save periodic checkpoint
         if epoch % 10 == 0:
-            ckpt_path = ckpt_dir / f"epoch_{epoch:03d}.pt"
-            torch.save(model.state_dict(), ckpt_path)
+            torch.save(model.state_dict(), ckpt_dir / f"epoch_{epoch:03d}.pt")
 
-        # Best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), "ml/models/best_model.pt")
+            torch.save(model.state_dict(), model_dir / "best_model.pt")
             no_improve = 0
             print(f"  ★ New best val accuracy: {best_val_acc:.3f}")
         else:
@@ -195,17 +203,28 @@ def train(args) -> None:
     print(f"\nTraining complete. Best val accuracy: {best_val_acc:.3f}")
 
     if args.export:
-        model.load_state_dict(torch.load("ml/models/best_model.pt", map_location="cpu"))
+        model.load_state_dict(torch.load(model_dir / "best_model.pt", map_location="cpu"))
         model.cpu()
-        model.export_onnx("ml/models/sign_recognizer.onnx")
-        build_references()
+        model.export_onnx(str(model_dir / "sign_recognizer.onnx"))
+        build_references(data_dir=data_dir, model_dir=model_dir)
+
+        # labels.txt: class_idx 순서대로 한 줄씩 (engine.py에서 읽음)
+        from .dataset import _load_vocab as _lv
+        vocab = _lv(data_dir)
+        labels_by_idx = sorted(vocab.items(), key=lambda kv: kv[1])
+        labels_path = model_dir / "labels.txt"
+        with open(labels_path, "w", encoding="utf-8") as f:
+            for lbl, _ in labels_by_idx:
+                f.write(lbl + "\n")
+        print(f"labels.txt → {labels_path} ({len(labels_by_idx)} classes)")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train BiGRU+Attention sign recogniser")
-    parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint .pt file to resume from")
-    parser.add_argument("--export", action="store_true",
-                        help="Export best model to ONNX after training")
+    parser = argparse.ArgumentParser(description="Train Transformer sign recogniser")
+    parser.add_argument("--data_dir",    default="ml/data",   help="학습 데이터 경로")
+    parser.add_argument("--model_dir",   default="ml/models", help="모델 저장 경로")
+    parser.add_argument("--resume",      default=None,        help="이어서 학습할 체크포인트 .pt")
+    parser.add_argument("--export",      action="store_true", help="학습 후 ONNX 내보내기")
+    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader 워커 수")
     args = parser.parse_args()
     train(args)

@@ -229,10 +229,14 @@ class HybridRecognitionEngine:
         return None
 
     def _onnx_infer(self, window: np.ndarray) -> Tuple[str, float]:
-        # 앞 126차원(양손 vision landmarks) 사용, SEQ_LEN=60으로 패딩/자르기
-        seq = window[:, :126]
+        # 모델 입력 차원을 ONNX 메타데이터에서 동적으로 읽어 처리
+        expected_dim = self._onnx_session.get_inputs()[0].shape[2]  # (batch, T, D) → D
+        seq = window[:, :expected_dim]
+        if seq.shape[1] < expected_dim:
+            pad = np.zeros((seq.shape[0], expected_dim - seq.shape[1]), dtype=np.float32)
+            seq = np.concatenate([seq, pad], axis=1)
         if len(seq) < 60:
-            pad = np.zeros((60 - len(seq), 126), dtype=np.float32)
+            pad = np.zeros((60 - len(seq), expected_dim), dtype=np.float32)
             seq = np.concatenate([seq, pad], axis=0)
         else:
             seq = seq[:60]
@@ -251,14 +255,9 @@ class HybridRecognitionEngine:
     def _compute_motion_energy(self, ff: FusedFrame) -> float:
         """
         Returns a motion proxy scalar.
-        - Glove present : L2 norm of gyro channels (indices 134-136, 새 레이아웃)
+        - Glove present : uses glove_confidence flag (no raw gyro in current layout)
         - Vision only   : frame-to-frame velocity of landmark centroid
         """
-        gyro = ff.fused_features[134:137]   # [0:126]=vision, [126:131]=flex, [131:134]=accel, [134:137]=gyro
-        gyro_norm = float(np.linalg.norm(gyro))
-        if gyro_norm > 1e-4:
-            return gyro_norm
-
         # Vision velocity: displacement of all landmarks between frames (양손 126D)
         vision = ff.fused_features[:126]
         if self._prev_vision is not None:

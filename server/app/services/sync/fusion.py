@@ -28,9 +28,8 @@ Approach
 
 from __future__ import annotations
 
-import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Deque, List, Optional, Tuple
 
 import numpy as np
@@ -40,33 +39,33 @@ from app.models.schemas.sensor import GloveData, SensorFrame, VisionData
 
 settings = get_settings()
 
-# Maximum time difference (seconds) to consider a glove packet
-# as "contemporaneous" with a camera frame.
-MAX_GLOVE_LAG_S: float = 0.10  # 100 ms
-
 VISION_DIM_PER_HAND = 63   # 21 landmarks × 3 (x, y, z)
 VISION_DIM = 126           # 양손: 63 × 2
-GLOVE_DIM = 14             # 5 flex + 3 accel + 3 gyro + 3 euler-from-quat
-FUSED_DIM = VISION_DIM + GLOVE_DIM   # 140
+FLEX_DIM   = 5             # per hand
+FUSED_DIM  = VISION_DIM + FLEX_DIM * 2   # 136
+
+# MediaPipe hand landmark finger chains (for flex synthesis)
+_FINGER_CHAINS = [
+    [1, 2, 3, 4],
+    [5, 6, 7, 8],
+    [9, 10, 11, 12],
+    [13, 14, 15, 16],
+    [17, 18, 19, 20],
+]
 
 
 @dataclass
 class FusedFrame:
     timestamp: float
-    vision_features: np.ndarray      # shape (VISION_DIM,)
-    glove_features: np.ndarray       # shape (GLOVE_DIM,)
-    fused_features: np.ndarray       # shape (FUSED_DIM,)
+    vision_features: np.ndarray      # shape (VISION_DIM,)   = 126
+    flex_features: np.ndarray        # shape (FLEX_DIM*2,)   = 10
+    fused_features: np.ndarray       # shape (FUSED_DIM,)    = 136
     vision_weight: float             # 0.0 – 1.0
     glove_weight: float              # 0.0 – 1.0
     vision_confidence: float
     glove_confidence: float
     glove_is_mock: bool = False
 
-
-@dataclass
-class _GloveSnapshot:
-    timestamp: float
-    data: GloveData
 
 
 class SensorFusionModule:
@@ -76,12 +75,7 @@ class SensorFusionModule:
     """
 
     def __init__(self) -> None:
-        self._window: Deque[FusedFrame] = deque(
-            maxlen=settings.WINDOW_SIZE
-        )
-        # Short ring of recent glove packets for nearest-neighbour lookup
-        self._glove_ring: Deque[_GloveSnapshot] = deque(maxlen=10)
-        self._last_glove: Optional[_GloveSnapshot] = None
+        self._window: Deque[FusedFrame] = deque(maxlen=settings.WINDOW_SIZE)
 
     # ─────────────────────── public API ─────────────────────────
 
@@ -90,30 +84,22 @@ class SensorFusionModule:
         Ingest one SensorFrame, fuse it, append to the sliding window,
         and return the resulting FusedFrame.
         """
-        # Register any glove data that arrived with this frame
-        if frame.glove is not None:
-            snap = _GloveSnapshot(timestamp=frame.timestamp, data=frame.glove)
-            self._glove_ring.append(snap)
-            self._last_glove = snap
-
         vision_feat, v_conf = self._extract_vision(frame.camera, frame.camera_left)
-        glove_feat, g_conf, is_mock = self._extract_glove(frame.timestamp)
+        flex_feat, g_conf, is_mock = self._extract_flex(
+            frame.glove, frame.glove_left, frame.camera, frame.camera_left
+        )
 
         v_w, g_w = self._compute_weights(v_conf, g_conf)
 
-        # Zero-pad the weaker modality when it is below the quality floor
-        # (so the model sees explicit zeros, not noisy garbage)
         if v_conf < settings.VISION_CONFIDENCE_MIN:
             vision_feat = np.zeros(VISION_DIM, dtype=np.float32)
-        if g_conf < settings.GLOVE_QUALITY_MIN:
-            glove_feat = np.zeros(GLOVE_DIM, dtype=np.float32)
 
-        fused = np.concatenate([vision_feat, glove_feat]).astype(np.float32)
+        fused = np.concatenate([vision_feat, flex_feat]).astype(np.float32)
 
         ff = FusedFrame(
             timestamp=frame.timestamp,
             vision_features=vision_feat,
-            glove_features=glove_feat,
+            flex_features=flex_feat,
             fused_features=fused,
             vision_weight=v_w,
             glove_weight=g_w,
@@ -130,14 +116,15 @@ class SensorFusionModule:
 
     def get_window_array(self) -> Optional[np.ndarray]:
         """
-        Return the sliding window as a float32 array of shape (T, FUSED_DIM).
-        Returns None if not enough frames have been collected yet.
+        Return the sliding window as (T, FUSED_DIM*2) with velocity appended.
+        Matches the 272D input the model was trained on.
         """
         if not self.window_full:
             return None
-        return np.array(
-            [f.fused_features for f in self._window], dtype=np.float32
-        )
+        arr = np.array([f.fused_features for f in self._window], dtype=np.float32)
+        vel = np.zeros_like(arr)
+        vel[1:] = arr[1:] - arr[:-1]
+        return np.concatenate([arr, vel], axis=1)
 
     def get_confidence_summary(self) -> dict:
         """Average modal confidences over the last 10 frames."""
@@ -151,8 +138,6 @@ class SensorFusionModule:
 
     def reset(self) -> None:
         self._window.clear()
-        self._glove_ring.clear()
-        self._last_glove = None
 
     # ─────────────────────── internals ──────────────────────────
 
@@ -162,9 +147,8 @@ class SensorFusionModule:
         left: Optional[VisionData],
     ) -> Tuple[np.ndarray, float]:
         right_feat, r_conf = self._extract_one_hand(right)
-        left_feat, l_conf = self._extract_one_hand(left)
+        left_feat, l_conf  = self._extract_one_hand(left)
         combined = np.concatenate([right_feat, left_feat]).astype(np.float32)
-        # 신뢰도: 두 손 중 높은 쪽 기준
         confidence = max(r_conf, l_conf)
         return combined, confidence
 
@@ -174,61 +158,79 @@ class SensorFusionModule:
         if vision is None:
             return np.zeros(VISION_DIM_PER_HAND, dtype=np.float32), 0.0
 
-        coords: List[float] = []
-        for lm in vision.landmarks:
-            coords.extend([lm.x, lm.y, lm.z])
+        # Use world landmarks (metric, hand-centric) for position invariance.
+        # Fall back to image landmarks if world not provided.
+        source = vision.world_landmarks if vision.world_landmarks else vision.landmarks
+        arr = np.array([[lm.x, lm.y, lm.z] for lm in source], dtype=np.float32)
 
-        # Normalise: subtract wrist (landmark 0) — translation-invariant
-        arr = np.array(coords, dtype=np.float32)
-        wrist = arr[:3]
-        arr = arr - np.tile(wrist, VISION_DIM_PER_HAND // 3)
+        # Wrist-center + scale normalise (mirrors extract_landmarks.py)
+        arr -= arr[0]
+        scale = float(np.linalg.norm(arr[9])) + 1e-6
+        arr /= scale
 
-        return arr, float(vision.confidence)
+        return arr.flatten(), float(vision.confidence)
 
-    def _extract_glove(
-        self, ts: float
+    def _extract_flex(
+        self,
+        glove_right: Optional[GloveData],
+        glove_left: Optional[GloveData],
+        vision_right: Optional[VisionData],
+        vision_left: Optional[VisionData],
     ) -> Tuple[np.ndarray, float, bool]:
         """
-        Find the glove snapshot closest in time to `ts`.
-        Falls back to the last known snapshot (hold-last-value strategy).
-        Returns (features, quality, is_mock).
+        Build a (10,) flex feature vector:  [right×5, left×5].
+
+        Priority:
+          1. Real glove data (ble_quality > 0.1)
+          2. Synthetic flex estimated from world landmarks
+          3. Zeros (no hand visible)
         """
-        snap = self._nearest_glove(ts)
-        if snap is None:
-            return np.zeros(GLOVE_DIM, dtype=np.float32), 0.0, True
+        r_flex, r_quality, r_mock = self._flex_one_hand(glove_right, vision_right)
+        l_flex, l_quality, l_mock = self._flex_one_hand(glove_left,  vision_left)
 
-        g = snap.data
-        euler = self._quat_to_euler(g.imu.quaternion)
-        features = np.array(
-            g.flex + g.imu.accel + g.imu.gyro + list(euler),
-            dtype=np.float32,
-        )
-        return features, float(g.ble_quality), g.is_mock
+        flex_feat = np.concatenate([r_flex, l_flex]).astype(np.float32)
+        quality   = max(r_quality, l_quality)
+        is_mock   = r_mock and l_mock
+        return flex_feat, quality, is_mock
 
-    def _nearest_glove(self, ts: float) -> Optional[_GloveSnapshot]:
-        """Return the glove snapshot with the smallest |Δt| to ts."""
-        if not self._glove_ring and self._last_glove is None:
-            return None
-
-        candidates = list(self._glove_ring)
-        if self._last_glove and self._last_glove not in candidates:
-            candidates.append(self._last_glove)
-
-        best = min(candidates, key=lambda s: abs(s.timestamp - ts))
-        if abs(best.timestamp - ts) > MAX_GLOVE_LAG_S:
-            # Too old to be useful, but still return it (hold-last-value)
-            # so the model sees a non-zero glove signal
-            return best
-        return best
+    def _flex_one_hand(
+        self,
+        glove: Optional[GloveData],
+        vision: Optional[VisionData],
+    ) -> Tuple[np.ndarray, float, bool]:
+        # 1. Real glove
+        if glove is not None and glove.ble_quality > 0.1:
+            return (
+                np.array(glove.flex, dtype=np.float32),
+                float(glove.ble_quality),
+                False,
+            )
+        # 2. Synthesise from world landmarks
+        if vision is not None:
+            source = vision.world_landmarks if vision.world_landmarks else vision.landmarks
+            arr = np.array([[lm.x, lm.y, lm.z] for lm in source], dtype=np.float32)
+            arr -= arr[0]
+            scale = float(np.linalg.norm(arr[9])) + 1e-6
+            arr /= scale
+            return self._estimate_flex(arr), 0.5, True
+        # 3. No data
+        return np.zeros(FLEX_DIM, dtype=np.float32), 0.0, True
 
     @staticmethod
-    def _quat_to_euler(q: List[float]) -> Tuple[float, float, float]:
-        """Convert quaternion [w, x, y, z] → Euler [roll, pitch, yaw] in rad."""
-        w, x, y, z = q
-        roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x ** 2 + y ** 2))
-        pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
-        yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y ** 2 + z ** 2))
-        return roll, pitch, yaw
+    def _estimate_flex(pts_21x3: np.ndarray) -> np.ndarray:
+        """Estimate per-finger flex ∈ [0,1] from normalised world landmarks."""
+        flex = []
+        for chain in _FINGER_CHAINS:
+            angles = []
+            for i in range(1, len(chain) - 1):
+                a = pts_21x3[chain[i - 1]] - pts_21x3[chain[i]]
+                b = pts_21x3[chain[i + 1]] - pts_21x3[chain[i]]
+                denom = np.linalg.norm(a) * np.linalg.norm(b) + 1e-8
+                cos_a = float(np.dot(a, b) / denom)
+                angles.append(np.arccos(np.clip(cos_a, -1.0, 1.0)))
+            mean_angle = float(np.mean(angles))
+            flex.append(float(np.clip(1.0 - mean_angle / np.pi, 0.0, 1.0)))
+        return np.array(flex, dtype=np.float32)
 
     @staticmethod
     def _compute_weights(v_conf: float, g_conf: float) -> Tuple[float, float]:

@@ -1,163 +1,153 @@
 """
-BiGRU + Self-Attention Sign Language Recognition Model
-=======================================================
+Sign Language Recognition — Transformer Encoder
+================================================
 
-Why this architecture for 10 words × 300 samples
---------------------------------------------------
-- MediaPipe already extracts landmarks → CNN not needed
-- GRU has fewer parameters than LSTM (less overfitting on small data)
-- Bidirectional: forward pass captures onset, backward pass captures release
-- Self-attention: learns which frames in the 2-second window matter most
-  (e.g., the peak of the gesture matters more than the transition frames)
-- ~120K parameters total → trains in minutes on a CPU
+Architecture
+------------
+Input projection  : 136 → d_model (256)
+Positional encoding: learned (max 120 frames)
+Transformer Encoder: N layers × (Multi-head Attention + FFN)
+Global avg pool   : T → 1
+Classifier        : d_model → num_classes
 
-Input  : (batch, T=60, D=126)  양손 vision landmarks (21×3×2)
-Output : (batch, num_classes)  raw logits
+Why Transformer over BiGRU for 800+ samples
+--------------------------------------------
+- Self-attention captures simultaneous finger/wrist relationships
+  across the entire sequence (BiGRU is sequential)
+- Parallel training — faster on GPU
+- Scales better as data grows
+
+Input  : (batch, T, 272)   위치(136) + 속도(136)
+Output : (batch, num_classes)
 
 Export to ONNX
 --------------
     python -m ml.training.model --export
-Produces: ml/models/sign_recognizer.onnx
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
-class SelfAttention(nn.Module):
-    """Single-head scaled dot-product attention over the time axis."""
-
-    def __init__(self, hidden_dim: int) -> None:
+class _LearnedPE(nn.Module):
+    """Learned positional encoding (more flexible than sinusoidal for short seqs)."""
+    def __init__(self, d_model: int, max_len: int = 120) -> None:
         super().__init__()
-        self.query = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.key   = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.scale = hidden_dim ** 0.5
+        self.pe = nn.Embedding(max_len, d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, T, H)
-        q = self.query(x)                       # (B, T, H)
-        k = self.key(x)                         # (B, T, H)
-        v = self.value(x)                       # (B, T, H)
-        scores = torch.bmm(q, k.transpose(1, 2)) / self.scale  # (B, T, T)
-        weights = F.softmax(scores, dim=-1)     # (B, T, T)
-        context = torch.bmm(weights, v)         # (B, T, H)
-        return context                          # (B, T, H)
+        # x: (B, T, D)
+        T = x.size(1)
+        pos = torch.arange(T, device=x.device)
+        return x + self.pe(pos)
 
 
 class SignRecognizer(nn.Module):
     """
-    Bidirectional GRU + Self-Attention classifier.
+    Transformer Encoder classifier for sign language recognition.
 
-    Architecture
-    ------------
-    Input projection  : 126 → 128
-    BiGRU × 2 layers : 128 → 256 hidden (2 × 128)
-    Self-attention    : 256 → 256
-    Global avg pool   : T → 1
-    Classifier        : 256 → num_classes
+    Parameters
+    ----------
+    input_dim   : feature dimension per frame (default 136)
+    d_model     : transformer hidden size (default 256)
+    nhead       : number of attention heads (default 4)
+    num_layers  : number of encoder layers (default 3)
+    dim_ff      : feedforward hidden size (default 512)
+    num_classes : output classes
+    dropout     : dropout rate
     """
 
     def __init__(
         self,
-        input_dim: int = 126,
-        hidden_dim: int = 128,
-        num_layers: int = 2,
+        input_dim:   int = 272,
+        d_model:     int = 256,
+        nhead:       int = 4,
+        num_layers:  int = 3,
+        dim_ff:      int = 512,
         num_classes: int = 10,
-        dropout: float = 0.3,
+        dropout:     float = 0.3,
     ) -> None:
         super().__init__()
 
         self.input_proj = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-        )
-
-        self.bigru = nn.GRU(
-            input_size=hidden_dim,
-            hidden_size=hidden_dim,
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=True,
-            dropout=dropout if num_layers > 1 else 0.0,
-        )
-
-        gru_out_dim = hidden_dim * 2     # bidirectional doubles hidden size
-
-        self.attn = SelfAttention(gru_out_dim)
-        self.drop = nn.Dropout(dropout)
-        self.norm = nn.LayerNorm(gru_out_dim)
-
-        self.classifier = nn.Sequential(
-            nn.Linear(gru_out_dim, hidden_dim),
+            nn.Linear(input_dim, d_model),
+            nn.LayerNorm(d_model),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes),
+        )
+
+        self.pos_enc = _LearnedPE(d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_ff,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,        # Pre-LN: more stable training
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, num_classes),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ----------
-        x : (B, T, 126)
+        x : (B, T, 136)
 
         Returns
         -------
         logits : (B, num_classes)
         """
-        # Project to hidden dim
-        h = self.input_proj(x)              # (B, T, 128)  x: (B, T, 126)
-
-        # BiGRU
-        gru_out, _ = self.bigru(h)          # (B, T, 256)
-
-        # Self-attention
-        ctx = self.attn(gru_out)            # (B, T, 256)
-        ctx = self.norm(gru_out + ctx)      # residual connection
-
-        # Global average pooling over time
-        pooled = ctx.mean(dim=1)            # (B, 256)
-        pooled = self.drop(pooled)
-
-        return self.classifier(pooled)      # (B, num_classes)
-
-    # ── ONNX export helper ────────────────────────────────────────
+        h = self.input_proj(x)        # (B, T, d_model)
+        h = self.pos_enc(h)           # add positional info
+        h = self.encoder(h)           # (B, T, d_model)
+        h = h.mean(dim=1)             # global average pool → (B, d_model)
+        return self.classifier(h)     # (B, num_classes)
 
     def export_onnx(self, path: str = "ml/models/sign_recognizer.onnx") -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.eval()
-        dummy = torch.zeros(1, 60, 126)
+        dummy = torch.zeros(1, 60, 272)
         torch.onnx.export(
             self,
             dummy,
             path,
             input_names=["input"],
             output_names=["logits"],
-            dynamic_axes={"input": {1: "time"}},   # variable T
+            dynamic_axes={"input": {1: "time"}},
             opset_version=17,
+            dynamo=False,
         )
-        print(f"Exported ONNX model → {path}")
+        print(f"Exported ONNX → {path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--export", action="store_true", help="Export untrained model to ONNX")
+    parser.add_argument("--export", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
     args = parser.parse_args()
 
-    model = SignRecognizer(input_dim=126)
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    model = SignRecognizer()
+    total = sum(p.numel() for p in model.parameters())
+    print(f"Parameters: {total:,}")
 
     if args.checkpoint:
         model.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
-        print(f"Loaded checkpoint: {args.checkpoint}")
+        print(f"Loaded: {args.checkpoint}")
 
     if args.export:
         model.export_onnx()
