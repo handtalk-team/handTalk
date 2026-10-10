@@ -14,7 +14,7 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=7';
+import { CameraCapture } from './camera.js?v=8';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js?v=14';
 
@@ -137,6 +137,65 @@ document.getElementById('btnEnd').addEventListener('click', () => {
   sessionActive = false;
   ui.setSessionButtons(false);
 });
+
+// ─── 글러브 색 보정 (재학습 없이 카메라 검출 개선) ─────────────
+const RECOLOR_KEY = 'handtalk.gloveRecolor';
+const rc = camera.recolor;
+try { Object.assign(rc.settings, JSON.parse(localStorage.getItem(RECOLOR_KEY) || '{}')); } catch {}
+const saveRecolor = () => {
+  try { localStorage.setItem(RECOLOR_KEY, JSON.stringify(rc.settings)); } catch {}
+};
+
+const rcEnabled  = document.getElementById('rcEnabled');
+const rcPick     = document.getElementById('rcPick');
+const rcSwatch   = document.getElementById('rcSwatch');
+const rcPreview  = document.getElementById('rcPreview');
+const rcSliders  = { tolerance: 'rcTol', brightness: 'rcBright', contrast: 'rcContrast' };
+const canvasEl   = document.getElementById('canvasEl');
+let picking = false;
+
+function renderRecolor() {
+  rcEnabled.checked = rc.settings.enabled;
+  rcPreview.checked = rc.settings.preview;
+  rcSwatch.style.background = rc.settings.color ? `rgb(${rc.settings.color.join(',')})` : 'transparent';
+  for (const [k, id] of Object.entries(rcSliders)) {
+    document.getElementById(id).value = rc.settings[k];
+    document.getElementById(id + 'Val').textContent = rc.settings[k];
+  }
+}
+
+rcEnabled.addEventListener('change', () => {
+  rc.settings.enabled = rcEnabled.checked;
+  if (rc.settings.enabled && !rc.settings.color) {
+    ui.addSystemMsg('먼저 "글러브 색 찍기"를 누르고 영상 속 글러브를 클릭하세요.', 'warning');
+  }
+  saveRecolor();
+});
+rcPreview.addEventListener('change', () => { rc.settings.preview = rcPreview.checked; saveRecolor(); });
+for (const [k, id] of Object.entries(rcSliders)) {
+  document.getElementById(id).addEventListener('input', (e) => {
+    rc.settings[k] = Number(e.target.value);
+    document.getElementById(id + 'Val').textContent = e.target.value;
+    saveRecolor();
+  });
+}
+rcPick.addEventListener('click', () => {
+  picking = true;
+  canvasEl.style.cursor = 'crosshair';
+  ui.addSystemMsg('영상에서 글러브 손등이나 손바닥을 클릭하세요.');
+});
+canvasEl.addEventListener('click', (e) => {
+  if (!picking) return;
+  picking = false;
+  canvasEl.style.cursor = '';
+  const r = canvasEl.getBoundingClientRect();
+  rc.settings.color = camera.pickColor((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+  rc.settings.enabled = true;
+  saveRecolor();
+  renderRecolor();
+  ui.addSystemMsg(`글러브 색 저장: rgb(${rc.settings.color.join(', ')}). 보정이 켜졌습니다.`);
+});
+renderRecolor();
 
 // ─── Data collection ────────────────────────────────────────────
 const btnCapture = document.getElementById('btnCapture');

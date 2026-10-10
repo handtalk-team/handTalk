@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     CAMERA_WIDTH: int = 640
     CAMERA_HEIGHT: int = 480
     CAMERA_FPS: int = 30
+    # MediaPipe 손 검출/추적 최소 점수. 글러브 착용 손은 맨손보다 점수가 낮아
+    # 기본값 0.5에서 0.3으로 낮춤 (오검출이 많으면 다시 올리세요)
+    HAND_DETECTION_CONFIDENCE: float = 0.30
 
     # ── Glove (USB Serial) ────────────────────────────────────────────────────
     # Serial port for the ESP32 right-hand glove.  Leave empty to disable.

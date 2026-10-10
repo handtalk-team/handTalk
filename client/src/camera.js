@@ -16,6 +16,8 @@
  *    switch to sending compressed JPEG frames and run MediaPipe server-side.
  */
 
+import { GloveRecolor } from './glove_recolor.js?v=1';
+
 export class CameraCapture {
   #video;
   #canvas;
@@ -23,6 +25,8 @@ export class CameraCapture {
   #callback = null;
   #hands = null;
   #mpCamera = null;
+  // 글러브 색 → 피부색 보정 (MediaPipe 입력에만 적용)
+  recolor = new GloveRecolor();
 
   constructor(videoEl, canvasEl) {
     this.#video  = videoEl;
@@ -65,12 +69,20 @@ export class CameraCapture {
     // MediaPipe camera loop
     this.#mpCamera = new Camera(this.#video, {
       onFrame: async () => {
-        await this.#hands.send({ image: this.#video });
+        const image = this.recolor.active
+          ? this.recolor.process(this.#video)
+          : this.#video;
+        await this.#hands.send({ image });
       },
       width: 640,
       height: 480,
     });
     this.#mpCamera.start();
+  }
+
+  /** 오버레이 canvas 위 정규화 좌표(0~1)의 글러브 색을 읽습니다. */
+  pickColor(nx, ny) {
+    return this.recolor.sampleColor(this.#video, nx, ny);
   }
 
   stop() {
@@ -87,6 +99,11 @@ export class CameraCapture {
 
     let right = null;
     let left  = null;
+
+    // 보정 화면 보기: 모델이 실제로 받은 영상을 오버레이에 그림
+    if (this.recolor.settings.preview && results.image) {
+      this.#ctx.drawImage(results.image, 0, 0, this.#canvas.width, this.#canvas.height);
+    }
 
     if (results.multiHandLandmarks?.length > 0) {
       results.multiHandLandmarks.forEach((lms, i) => {
