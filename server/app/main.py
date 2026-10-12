@@ -6,6 +6,7 @@ Endpoints
 ---------
 GET  /healthz                   — liveness probe
 WS   /ws                        — real-time sign language session
+WS   /ws/avatar                 — Unreal MetaHuman client (receives tutor replies)
 GET  /sessions/{id}             — session metadata (REST)
 GET  /feedback/{id}/summary     — post-session summary (REST)
 GET  /feedback/{id}/error-note  — auto-generated error note (REST)
@@ -21,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.feedback import router as feedback_router
 from app.api.routes.sessions import router as sessions_router
-from app.api.ws.session import websocket_endpoint
+from app.api.ws.session import avatar_endpoint, websocket_endpoint
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.core.redis_client import close_redis
@@ -66,6 +67,11 @@ if os.path.isdir(client_dir):
 @app.websocket("/ws")
 async def ws_route(ws: WebSocket):
     await websocket_endpoint(ws)
+
+# Unreal MetaHuman 클라이언트: 튜터 응답(avatar_commands)과 인식 결과를 받는다
+@app.websocket("/ws/avatar")
+async def ws_avatar_route(ws: WebSocket):
+    await avatar_endpoint(ws)
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 @app.on_event("startup")

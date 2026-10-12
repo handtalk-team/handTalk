@@ -1,0 +1,15 @@
+# Unreal 빌드 산출물과 캐시
+**/Binaries/
+**/Intermediate/
+**/Saved/
+**/DerivedDataCache/
+**/.vs/
+*.sln
+*.VC.db
+*.opensdf
+*.sdf
+*.suo
+
+# 메타휴먼 에셋과 큰 콘텐츠는 저장소에 넣지 않고 각자 컴퓨터에 둔다.
+# 저장소에는 코드, 설정, 변환 스크립트만 올린다.
+**/Content/

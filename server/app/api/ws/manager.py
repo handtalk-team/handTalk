@@ -20,6 +20,8 @@ class ConnectionManager:
     def __init__(self) -> None:
         # session_id → set of websockets (supports multiple tabs)
         self._sessions: Dict[str, Set[WebSocket]] = defaultdict(set)
+        # Unreal MetaHuman 클라이언트 (/ws/avatar) — 튜터 응답을 받기만 한다
+        self._avatars: Set[WebSocket] = set()
 
     async def accept(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -49,6 +51,24 @@ class ConnectionManager:
                 dead.append(ws)
         for ws in dead:
             self._sessions[session_id].discard(ws)
+
+    def add_avatar(self, ws: WebSocket) -> None:
+        self._avatars.add(ws)
+        logger.info("Avatar client connected  total=%d", len(self._avatars))
+
+    def remove_avatar(self, ws: WebSocket) -> None:
+        self._avatars.discard(ws)
+        logger.info("Avatar client disconnected  total=%d", len(self._avatars))
+
+    async def broadcast_avatar(self, data: dict) -> None:
+        dead: list[WebSocket] = []
+        for ws in self._avatars:
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._avatars.discard(ws)
 
     @property
     def total(self) -> int:
