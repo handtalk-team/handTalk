@@ -63,6 +63,7 @@ DIM_FF        = 512
 
 def train(args) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    epochs = args.epochs
     print(f"Device: {device}")
 
     data_dir  = Path(args.data_dir)
@@ -70,8 +71,10 @@ def train(args) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Data ─────────────────────────────────────────────────────
-    train_ds = SignDataset(split="train", augment=True,  window_T=WINDOW_T, data_dir=data_dir)
-    val_ds   = SignDataset(split="val",   augment=False, window_T=WINDOW_T, data_dir=data_dir)
+    ds_kw = dict(window_T=WINDOW_T, data_dir=data_dir, packed=args.packed,
+                 holdout_test=not args.no_test_split)
+    train_ds = SignDataset(split="train", augment=True,  **ds_kw)
+    val_ds   = SignDataset(split="val",   augment=False, **ds_kw)
 
     if len(train_ds) == 0:
         print(
@@ -104,10 +107,6 @@ def train(args) -> None:
 
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    if args.resume:
-        model.load_state_dict(torch.load(args.resume, map_location=device))
-        print(f"Resumed from: {args.resume}")
-
     # ── Optimiser & scheduler ─────────────────────────────────────
     criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTH)
     optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
@@ -117,7 +116,7 @@ def train(args) -> None:
         optimizer,
         schedulers=[
             optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs),
-            optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS - warmup_epochs),
+            optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs - warmup_epochs)),
         ],
         milestones=[warmup_epochs],
     )
@@ -126,20 +125,38 @@ def train(args) -> None:
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_path = model_dir / "training_log.csv"
-    with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "lr"])
+    last_path = model_dir / "last.pt"
 
     best_val_acc = 0.0
     no_improve = 0
+    start_epoch = 1
+
+    if args.resume:
+        state = torch.load(args.resume, map_location=device)
+        if isinstance(state, dict) and "model" in state:
+            # last.pt: 모델 + 옵티마이저 + 스케줄러 + 진행 상황 전체 복원
+            model.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scheduler.load_state_dict(state["scheduler"])
+            start_epoch = state["epoch"] + 1
+            best_val_acc = state["best_val_acc"]
+            no_improve = state["no_improve"]
+        else:
+            model.load_state_dict(state)
+        print(f"Resumed from: {args.resume} (start epoch {start_epoch})")
+
+    if start_epoch == 1:
+        with open(log_path, "w", newline="") as f:
+            csv.writer(f).writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "lr"])
 
     # ── Training loop ─────────────────────────────────────────────
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(start_epoch, epochs + 1):
         t0 = time.time()
 
         # Train
         model.train()
         tr_loss, tr_correct, tr_total = 0.0, 0, 0
-        for x, y in train_dl:
+        for step, (x, y) in enumerate(train_dl, 1):
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             logits = model(x)
@@ -151,6 +168,12 @@ def train(args) -> None:
             tr_loss += loss.item() * len(y)
             tr_correct += (logits.argmax(1) == y).sum().item()
             tr_total += len(y)
+
+            # 전체 AI Hub는 에폭 하나가 길어서 중간 진행 상황 출력
+            if args.log_every and step % args.log_every == 0:
+                print(f"  [epoch {epoch}] {tr_total}/{len(train_ds)}  "
+                      f"loss={tr_loss / tr_total:.4f}  acc={tr_correct / tr_total:.3f}  "
+                      f"({(time.time() - t0) / 60:.1f}분)", flush=True)
 
         scheduler.step()
 
@@ -174,10 +197,11 @@ def train(args) -> None:
 
         elapsed = time.time() - t0
         print(
-            f"Epoch {epoch:03d}/{EPOCHS}  "
+            f"Epoch {epoch:03d}/{epochs}  "
             f"train_loss={tr_loss_avg:.4f}  train_acc={tr_acc:.3f}  "
             f"val_loss={val_loss_avg:.4f}  val_acc={val_acc:.3f}  "
-            f"lr={current_lr:.2e}  ({elapsed:.1f}s)"
+            f"lr={current_lr:.2e}  ({elapsed:.1f}s)",
+            flush=True,
         )
 
         with open(log_path, "a", newline="") as f:
@@ -193,12 +217,23 @@ def train(args) -> None:
             best_val_acc = val_acc
             torch.save(model.state_dict(), model_dir / "best_model.pt")
             no_improve = 0
-            print(f"  ★ New best val accuracy: {best_val_acc:.3f}")
+            print(f"  ★ New best val accuracy: {best_val_acc:.3f}", flush=True)
         else:
             no_improve += 1
-            if no_improve >= PATIENCE:
-                print(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
-                break
+
+        # 매 에폭 전체 상태 저장 → 꺼졌다 켜져도 --resume <model_dir>/last.pt 로 이어서
+        torch.save({
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "epoch": epoch,
+            "best_val_acc": best_val_acc,
+            "no_improve": no_improve,
+        }, last_path)
+
+        if no_improve >= PATIENCE:
+            print(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
+            break
 
     print(f"\nTraining complete. Best val accuracy: {best_val_acc:.3f}")
 
@@ -226,5 +261,12 @@ if __name__ == "__main__":
     parser.add_argument("--resume",      default=None,        help="이어서 학습할 체크포인트 .pt")
     parser.add_argument("--export",      action="store_true", help="학습 후 ONNX 내보내기")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader 워커 수")
+    parser.add_argument("--epochs",      type=int, default=EPOCHS, help="최대 에폭 수")
+    parser.add_argument("--packed",      action="store_true",
+                        help="클립을 RAM 대신 float16 packed 캐시(memmap)에서 읽기 (전체 AI Hub용)")
+    parser.add_argument("--no_test_split", action="store_true",
+                        help="별도 테스트셋이 있을 때 수어자 split 에서 test 몫도 train 으로")
+    parser.add_argument("--log_every",   type=int, default=0,
+                        help="N 배치마다 에폭 중간 진행 출력 (0=끔)")
     args = parser.parse_args()
     train(args)

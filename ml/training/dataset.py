@@ -31,9 +31,11 @@ Augmentations (training only)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -163,6 +165,89 @@ def _pad_or_trim(seq: np.ndarray, target_T: int = 60) -> np.ndarray:
     return np.concatenate([seq, pad], axis=0)
 
 
+# ── Split 헬퍼 ─────────────────────────────────────────────────────────────────
+
+_SIGNER_RE = re.compile(r"_(REAL|SYN)(\d+)_")
+
+
+def _signer_of(path: Path) -> Optional[str]:
+    """aihub_NIA_SL_WORD0001_REAL05_F.npy → 'REAL05' (syn_word 는 'SYN01')"""
+    m = _SIGNER_RE.search(path.name)
+    return m.group(1) + m.group(2) if m else None
+
+
+def _signer_split(root: Path, vocab: Dict[str, int], seed: int,
+                  holdout_test: bool = True) -> Optional[Dict[str, str]]:
+    """
+    수어자 → 'train'/'val'/'test'. 모든 파일에 수어자 번호가 있을 때만 (아니면 None).
+    REAL 수어자만 val/test 로 떼어내고, syn_word(SYN) 클립은 항상 train.
+    holdout_test=False: 별도 테스트셋(예: AI Hub 2.Validation)이 있을 때 test 몫도 train 으로.
+    """
+    signers = set()
+    for label in vocab:
+        label_dir = root / label
+        if not label_dir.exists():
+            continue
+        for f in label_dir.glob("*.npy"):
+            s = _signer_of(f)
+            if s is None:
+                return None
+            signers.add(s)
+    real = sorted(s for s in signers if s.startswith("REAL"))
+    if len(real) < (3 if holdout_test else 2):
+        return None
+    random.Random(seed).shuffle(real)
+    n_val = max(1, round(len(real) * 0.15))
+    n_test = max(1, round(len(real) * 0.15)) if holdout_test else 0
+    n_train = len(real) - n_val - n_test
+    split = {s: "train" for s in signers if not s.startswith("REAL")}
+    split.update({s: "train" for s in real[:n_train]})
+    split.update({s: "val" for s in real[n_train:n_train + n_val]})
+    split.update({s: "test" for s in real[n_train + n_val:]})
+    return split
+
+
+# ── 대용량 데이터: float16 packed 캐시 ─────────────────────────────────────────
+# 전체 AI Hub(수십만 클립)는 RAM에 다 못 올리므로 split별로 하나의 float16 파일에
+# 이어 붙여 두고 memmap 으로 필요한 클립만 읽음.
+
+def _build_pack(root: Path, split: str, items: List[Tuple[Path, int]]) -> Tuple[Path, np.ndarray]:
+    """items(파일, 클래스) → (packed 데이터 경로, index[N,3] = offset, length, label)"""
+    key = hashlib.md5("\n".join(f"{f.parent.name}/{f.name}:{c}" for f, c in items)
+                      .encode("utf-8")).hexdigest()[:12]
+    cache_dir = root / "_cache"
+    cache_dir.mkdir(exist_ok=True)
+    data_path = cache_dir / f"{split}_{key}.f16"
+    idx_path  = cache_dir / f"{split}_{key}.idx.npy"
+    if data_path.exists() and idx_path.exists():
+        return data_path, np.load(str(idx_path))
+
+    print(f"[{split}] packed 캐시 생성 중 ({len(items)}개 클립) → {data_path}", flush=True)
+    lengths = np.array([np.load(str(f), mmap_mode="r").shape[0] for f, _ in items], dtype=np.int64)
+    offsets = np.concatenate([[0], np.cumsum(lengths)[:-1]]).astype(np.int64)
+    total = int(lengths.sum())
+    tmp_path = data_path.with_suffix(".tmp")
+    mm = np.memmap(str(tmp_path), dtype=np.float16, mode="w+", shape=(max(total, 1), RAW_DIM))
+    for i, (f, _) in enumerate(items):
+        mm[offsets[i]: offsets[i] + lengths[i]] = _load_raw(f).astype(np.float16)
+        if (i + 1) % 20000 == 0:
+            print(f"  {i + 1}/{len(items)}", flush=True)
+    mm.flush()
+    del mm
+    os.replace(tmp_path, data_path)
+    index = np.stack([offsets, lengths, np.array([c for _, c in items], dtype=np.int64)], axis=1)
+    np.save(str(idx_path), index)
+    return data_path, index
+
+
+def _load_raw(f: Path) -> np.ndarray:
+    arr = np.load(str(f)).astype(np.float32)
+    if arr.shape[1] < RAW_DIM:
+        pad = np.zeros((arr.shape[0], RAW_DIM - arr.shape[1]), dtype=np.float32)
+        return np.concatenate([arr, pad], axis=1)
+    return arr[:, :RAW_DIM]
+
+
 # ── Dataset ────────────────────────────────────────────────────────────────────
 
 class SignDataset(Dataset):
@@ -174,26 +259,55 @@ class SignDataset(Dataset):
         seed: int = 42,
         vocab: Optional[Dict[str, int]] = None,
         data_dir: Optional[Path] = None,
+        packed: bool = False,
+        holdout_test: bool = True,
     ) -> None:
+        """
+        packed=True      : 클립을 RAM에 올리지 않고 float16 packed 캐시(memmap)에서 읽음 (전체 AI Hub용)
+        holdout_test=False: 별도 테스트셋이 있을 때 수어자 split 에서 test 몫을 train 으로
+        split="all"      : 폴더 안 전체 클립 (별도 테스트셋 평가용)
+        """
         self.augment  = augment and (split == "train")
         self.window_T = window_T
         self.samples: List[Tuple[np.ndarray, int]] = []
+        self._pack_path: Optional[Path] = None
+        self._pack_index: Optional[np.ndarray] = None
+        self._pack_mm: Optional[np.memmap] = None
 
         root = Path(data_dir) if data_dir else DATA_DIR
         sign_vocab = vocab if vocab is not None else _load_vocab(root)
         self.num_classes = len(sign_vocab)
         rng = random.Random(seed)
 
+        # AI Hub 파일명(aihub_NIA_SL_WORDxxxx_REALnn_X.npy)에 수어자 번호가 있으면
+        # 수어자 단위로 split → 같은 사람의 다른 카메라 각도가 train/val에 섞이지 않음
+        signer_split = None if split == "all" else _signer_split(root, sign_vocab, seed, holdout_test)
+
+        items: List[Tuple[Path, int]] = []
         for label, class_idx in sign_vocab.items():
             label_dir = root / label
             if not label_dir.exists():
                 continue
             files = sorted(label_dir.glob("*.npy"))
+
+            if split == "all":
+                items.extend((f, class_idx) for f in files)
+                continue
+
+            if signer_split is not None:
+                items.extend((f, class_idx) for f in files
+                             if signer_split.get(_signer_of(f)) == split)
+                continue
+
             rng.shuffle(files)
 
             n = len(files)
             n_train = int(n * 0.70)
             n_val   = int(n * 0.15)
+            # 샘플 데이터처럼 클래스당 클립이 적을 때(배치 1개 = 5방향)도 val 최소 1개 확보
+            if n_val == 0 and n >= 3:
+                n_val = 1
+                n_train = min(n_train, n - 1)
 
             if split == "train":
                 chosen = files[:n_train]
@@ -202,20 +316,34 @@ class SignDataset(Dataset):
             else:
                 chosen = files[n_train + n_val:]
 
-            for f in chosen:
-                arr = np.load(str(f)).astype(np.float32)
-                if arr.shape[1] < RAW_DIM:
-                    pad = np.zeros((arr.shape[0], RAW_DIM - arr.shape[1]), dtype=np.float32)
-                    arr = np.concatenate([arr, pad], axis=1)
-                else:
-                    arr = arr[:, :RAW_DIM]
-                self.samples.append((arr, class_idx))
+            items.extend((f, class_idx) for f in chosen)
+
+        if packed and items:
+            self._pack_path, self._pack_index = _build_pack(root, split, items)
+        else:
+            self.samples = [(_load_raw(f), c) for f, c in items]
 
     def __len__(self) -> int:
+        if self._pack_index is not None:
+            return len(self._pack_index)
         return len(self.samples)
 
+    def __getstate__(self):
+        # DataLoader 워커로 넘길 때 memmap 은 다시 열도록 (통째로 pickle 되지 않게)
+        state = self.__dict__.copy()
+        state["_pack_mm"] = None
+        return state
+
+    def _get_raw(self, idx: int) -> Tuple[np.ndarray, int]:
+        if self._pack_index is None:
+            return self.samples[idx]
+        if self._pack_mm is None:
+            self._pack_mm = np.memmap(str(self._pack_path), dtype=np.float16, mode="r").reshape(-1, RAW_DIM)
+        off, length, label = self._pack_index[idx]
+        return np.asarray(self._pack_mm[off: off + length], dtype=np.float32), int(label)
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        seq, label = self.samples[idx]   # (T, 136)
+        seq, label = self._get_raw(idx)   # (T, 136)
 
         if self.augment:
             seq = _time_warp(seq)

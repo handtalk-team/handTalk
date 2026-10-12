@@ -15,6 +15,11 @@ Usage
         --keypoint "..." --morpheme "..." --output ml/data \\
         --words 병원 아프다 괜찮다 의사 간호사
 
+    # 전체 단어 (3000개), 8개 프로세스 병렬
+    python -m ml.preprocessing.extract_aihub \\
+        --keypoint "..." --morpheme "..." --output E:/handtalk_data/npy_train \\
+        --all_words --workers 8
+
 AI Hub 데이터 구조
 ------------------
 keypoint/
@@ -25,6 +30,10 @@ keypoint/
 morpheme/
   {batch}/
     NIA_SL_WORD{id}_REAL{n}_{angle}_morpheme.json  ← 라벨 + 구간 정보
+
+syn_word 데이터(NIA_SL_WORD{id}_SYN{n}_{angle})도 같은 구조라 그대로 처리됨.
+
+출력 파일명은 aihub_{clip_name}.npy — 이미 있으면 스킵하므로 중단 후 재실행하면 이어서 진행.
 
 Feature vector (136-D per frame)
 ---------------------------------
@@ -42,7 +51,9 @@ import json
 import os
 import re
 import sys
+import time
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -65,6 +76,9 @@ DEFAULT_WORDS = [
     "병원", "아프다", "괜찮다", "치료", "건강",
     "감기", "의사", "간호사", "검사", "입원",
 ]
+
+# Windows 폴더명에 쓸 수 없는 문자
+_INVALID_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 # ── Feature engineering ────────────────────────────────────────────────────────
@@ -139,15 +153,23 @@ def _read_keypoint_json(path: str) -> Tuple[Optional[np.ndarray], Optional[np.nd
         return None, None
 
 
+def _list_frames(clip_dir: str) -> List[str]:
+    # os.listdir: glob보다 빠르고 '[라벨]' 같은 폴더명을 패턴으로 해석하지 않음
+    return sorted(os.path.join(clip_dir, n) for n in os.listdir(clip_dir)
+                  if n.endswith('_keypoints.json'))
+
+
 def _process_clip(clip_dir: str,
                   start_sec: float = 0.0,
                   end_sec:   float = 9999.0,
-                  fps:       float = 30.0) -> Optional[np.ndarray]:
+                  fps:       float = 30.0,
+                  json_files: Optional[List[str]] = None) -> Optional[np.ndarray]:
     """
     클립 폴더의 프레임 JSON들을 순서대로 읽어 (T, 136) 배열 반환.
     start_sec/end_sec: morpheme에서 추출한 실제 수어 구간 (초)
     """
-    json_files = sorted(glob.glob(os.path.join(clip_dir, '*_keypoints.json')))
+    if json_files is None:
+        json_files = _list_frames(clip_dir)
     if not json_files:
         return None
 
@@ -172,10 +194,16 @@ def _process_clip(clip_dir: str,
 
 # ── morpheme 매핑 ──────────────────────────────────────────────────────────────
 
+def _safe_label(label: str) -> str:
+    """라벨을 폴더명으로 쓸 수 있게 정리 (Windows 금지 문자 → '_')"""
+    s = _INVALID_FS_CHARS.sub('_', label.strip()).rstrip('. ')
+    return s or '_'
+
+
 def _build_word_map(morpheme_dir: str) -> Dict[str, str]:
     """WORD0391 → '집중' 매핑 딕셔너리"""
     word_map: Dict[str, str] = {}
-    for jf in glob.glob(os.path.join(morpheme_dir, '**', '*_morpheme.json'),
+    for jf in glob.glob(os.path.join(glob.escape(morpheme_dir), '**', '*_morpheme.json'),
                         recursive=True):
         try:
             with open(jf, encoding='utf-8') as f:
@@ -190,14 +218,15 @@ def _build_word_map(morpheme_dir: str) -> Dict[str, str]:
 
 
 def _build_clip_info(morpheme_dir: str,
-                     target_labels: List[str],
+                     target_labels: Optional[List[str]],
                      batch: str = '01') -> Dict[str, List[dict]]:
     """
     대상 단어의 클립 정보 수집.
+    target_labels: None 이면 전체 단어
     batch: keypoint 배치 번호와 일치하는 morpheme 하위 폴더 (기본 '01')
     반환: {label: [{word_id, clip_name, start, end, fps}]}
     """
-    target_set = set(target_labels)
+    target_set = set(target_labels) if target_labels is not None else None
     clips: Dict[str, List[dict]] = defaultdict(list)
 
     # 지정 배치 폴더만 스캔 (전체 스캔 대비 ~16배 빠름)
@@ -205,7 +234,7 @@ def _build_clip_info(morpheme_dir: str,
     if not os.path.exists(scan_dir):
         scan_dir = morpheme_dir   # fallback: 전체 스캔
 
-    for jf in glob.glob(os.path.join(scan_dir, '**', '*_morpheme.json'),
+    for jf in glob.glob(os.path.join(glob.escape(scan_dir), '**', '*_morpheme.json'),
                         recursive=True):
         try:
             with open(jf, encoding='utf-8') as f:
@@ -214,7 +243,7 @@ def _build_clip_info(morpheme_dir: str,
             filename = meta['name']                        # NIA_SL_WORD1119_REAL01_R.mp4
             word_id  = filename.split('_')[2]              # WORD1119
             label    = d['data'][0]['attributes'][0]['name']
-            if label not in target_set:
+            if target_set is not None and label not in target_set:
                 continue
             duration = float(meta.get('duration', 0))
             start    = float(d['data'][0].get('start', 0))
@@ -232,14 +261,41 @@ def _build_clip_info(morpheme_dir: str,
     return clips
 
 
+# ── 클립 1개 처리 (병렬 워커) ──────────────────────────────────────────────────
+
+def _extract_one(task: Tuple[str, str, float, float, float]) -> str:
+    """'saved' | 'skipped' | 'missing' | 'failed'"""
+    clip_path, out_file, start, end, duration = task
+    if os.path.exists(out_file):
+        return 'skipped'
+    if not os.path.isdir(clip_path):
+        return 'missing'
+    try:
+        json_files = _list_frames(clip_path)
+        # fps 추정: 프레임 수 / 영상 길이
+        fps = len(json_files) / duration if duration > 0 else 30.0
+        arr = _process_clip(clip_path, start_sec=start, end_sec=end,
+                            fps=fps, json_files=json_files)
+        if arr is None:
+            return 'failed'
+        # 임시 파일에 쓰고 rename → 중간에 끊겨도 깨진 npy가 남지 않음
+        tmp = out_file + '.tmp.npy'
+        np.save(tmp, arr)
+        os.replace(tmp, out_file)
+        return 'saved'
+    except Exception:
+        return 'failed'
+
+
 # ── 메인 ──────────────────────────────────────────────────────────────────────
 
 def extract(keypoint_dir: str,
             morpheme_dir: str,
             output_dir:   str,
-            target_words: List[str],
+            target_words: Optional[List[str]],
             batch:        str = '01',
-            overwrite:    bool = False) -> None:
+            overwrite:    bool = False,
+            workers:      int = 1) -> None:
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -249,58 +305,46 @@ def extract(keypoint_dir: str,
 
     if not clip_info:
         print("[ERROR] 대상 단어를 찾지 못했습니다. --words 옵션을 확인하세요.")
-        sys.exit(1)
+        return
 
     found = list(clip_info.keys())
-    missing = [w for w in target_words if w not in clip_info]
-    print(f"  찾은 단어: {found}")
-    if missing:
-        print(f"  데이터 없음: {missing}")
+    print(f"  찾은 단어: {len(found)}개")
+    if target_words is not None:
+        missing = [w for w in target_words if w not in clip_info]
+        if missing:
+            print(f"  데이터 없음: {missing}")
 
-    # 클래스 인덱스
-    vocab = {label: idx for idx, label in enumerate(sorted(found))}
+    # 클래스 인덱스 (폴더명 = 정리된 라벨)
+    vocab = {lbl: idx for idx, lbl in enumerate(sorted({_safe_label(l) for l in found}))}
 
-    print(f"\n[2/3] 키포인트 추출 시작 ...")
-    total_saved = 0
-
+    tasks = []
     for label, clips in sorted(clip_info.items()):
-        label_dir = out / label
+        label_dir = out / _safe_label(label)
         label_dir.mkdir(exist_ok=True)
-        existing  = len(list(label_dir.glob("aihub_*.npy")))
-        saved = 0
-
-        print(f"\n  [{label}] {len(clips)}개 클립")
         for info in clips:
-            out_file = label_dir / f"aihub_{existing + saved:04d}.npy"
-            if out_file.exists() and not overwrite:
-                saved += 1
-                continue
+            # 파일명에 클립명(REALnn/SYNnn = 수어자)을 남겨 재실행 시 중복 방지 + 수어자 단위 split 가능
+            out_file = label_dir / f"aihub_{info['clip_name']}.npy"
+            if overwrite and out_file.exists():
+                out_file.unlink()
+            tasks.append((os.path.join(keypoint_dir, info['clip_name']), str(out_file),
+                          info['start'], info['end'], info['duration']))
 
-            # 키포인트 폴더 찾기: {keypoint_dir}/{clip_name}
-            clip_name = info['clip_name']
-            matches   = glob.glob(os.path.join(keypoint_dir, clip_name))
-            if not matches:
-                continue
-
-            clip_path = matches[0]
-            # fps 추정: 프레임 수 / 영상 길이
-            n_frames = len(glob.glob(os.path.join(clip_path, '*_keypoints.json')))
-            fps = n_frames / info['duration'] if info['duration'] > 0 else 30.0
-
-            arr = _process_clip(clip_path,
-                                start_sec=info['start'],
-                                end_sec=info['end'],
-                                fps=fps)
-            if arr is None:
-                continue
-
-            np.save(str(out_file), arr)
-            saved += 1
-            if saved % 50 == 0:
-                print(f"    {saved}/{len(clips)} 저장 중 ...")
-
-        print(f"    → {saved}개 저장")
-        total_saved += saved
+    print(f"\n[2/3] 키포인트 추출 시작 ... ({len(tasks)}개 클립, workers={workers})")
+    counts: Dict[str, int] = defaultdict(int)
+    t0 = time.time()
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            results = ex.map(_extract_one, tasks, chunksize=8)
+            for i, r in enumerate(results, 1):
+                counts[r] += 1
+                if i % 1000 == 0:
+                    _print_progress(i, len(tasks), counts, t0)
+    else:
+        for i, task in enumerate(tasks, 1):
+            counts[_extract_one(task)] += 1
+            if i % 1000 == 0:
+                _print_progress(i, len(tasks), counts, t0)
+    _print_progress(len(tasks), len(tasks), counts, t0)
 
     # vocab.json 저장
     vocab_path = out / 'vocab.json'
@@ -318,9 +362,17 @@ def extract(keypoint_dir: str,
         json.dump(vocab, f, ensure_ascii=False, indent=2)
 
     print(f"\n[3/3] 완료!")
-    print(f"  총 {total_saved}개 샘플 → {out}")
-    print(f"  vocab.json → {vocab_path}")
-    print(f"  클래스: {vocab}")
+    print(f"  저장 {counts['saved']} / 기존 {counts['skipped']} / "
+          f"키포인트 없음 {counts['missing']} / 실패 {counts['failed']} → {out}")
+    print(f"  vocab.json → {vocab_path} ({len(vocab)} classes)")
+
+
+def _print_progress(i: int, n: int, counts: Dict[str, int], t0: float) -> None:
+    el = time.time() - t0
+    eta = el / i * (n - i) if i else 0
+    print(f"    {i}/{n}  saved={counts['saved']} skipped={counts['skipped']} "
+          f"missing={counts['missing']} failed={counts['failed']}  "
+          f"{el/60:.1f}분 경과, 남은 시간 약 {eta/60:.1f}분", flush=True)
 
 
 if __name__ == '__main__':
@@ -335,8 +387,12 @@ if __name__ == '__main__':
                         help='출력 디렉토리 (기본: ml/data)')
     parser.add_argument('--words',    nargs='+', default=DEFAULT_WORDS,
                         help='학습할 단어 목록 (기본: 병원 시나리오 10단어)')
+    parser.add_argument('--all_words', action='store_true',
+                        help='morpheme에 있는 전체 단어 추출 (--words 무시)')
     parser.add_argument('--batches',  nargs='+', default=None,
                         help='처리할 배치 번호 목록 (기본: 자동 감지). 예: 01 02 03')
+    parser.add_argument('--workers',  type=int, default=1,
+                        help='병렬 프로세스 수 (기본 1)')
     parser.add_argument('--overwrite', action='store_true',
                         help='기존 npy 파일 덮어쓰기')
     args = parser.parse_args()
@@ -365,7 +421,8 @@ if __name__ == '__main__':
             keypoint_dir=kp_dir,
             morpheme_dir=args.morpheme,
             output_dir=args.output,
-            target_words=args.words,
+            target_words=None if args.all_words else args.words,
             batch=batch,
             overwrite=args.overwrite,
+            workers=args.workers,
         )
