@@ -57,7 +57,7 @@ export class CameraCapture {
     this.#hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,
-      minDetectionConfidence: 0.3,  // 낮출수록 장갑 착용 시에도 감지됨
+      minDetectionConfidence: 0.1,  // 낮출수록 장갑 착용 시에도 감지됨
       minTrackingConfidence: 0.3,
     });
     this.#hands.onResults((results) => this.#onResults(results));
