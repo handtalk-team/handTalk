@@ -50,7 +50,8 @@ export class LiveTutorStage {
   // 동작은 Unreal 이 서버에서 직접 받는다 (llm_response, lesson)
   async play() { return 1; }
 
-  async setDemo() { return 1; }
+  // 클립이 있는 단어만 시범을 보일 수 있다 (서버가 준 clips 가 비어 있으면 준비 중)
+  async setDemo(clips = []) { return clips.length; }
 
   destroy() { this.#frame.remove(); }
 }
