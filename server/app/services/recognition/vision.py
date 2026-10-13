@@ -24,9 +24,11 @@ from typing import List, Optional
 
 import cv2
 
+from app.core.config import get_settings
 from app.models.schemas.sensor import HandLandmark, VisionData
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 MODEL_PATH = "ml/models/hand_landmarker.task"
 MODEL_URL = (
@@ -112,9 +114,10 @@ class WebcamVisionCapture(VisionCaptureInterface):
             base_options=mp_python.BaseOptions(model_asset_path=model_path),
             running_mode=mp_vision.RunningMode.IMAGE,
             num_hands=2,
-            min_hand_detection_confidence=0.5,
-            min_hand_presence_confidence=0.5,
-            min_tracking_confidence=0.5,
+            # 글러브 착용 손은 맨손보다 점수가 낮게 나오므로 기준을 완화 (config 참고)
+            min_hand_detection_confidence=settings.HAND_DETECTION_CONFIDENCE,
+            min_hand_presence_confidence=settings.HAND_DETECTION_CONFIDENCE,
+            min_tracking_confidence=settings.HAND_DETECTION_CONFIDENCE,
         )
         self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
 

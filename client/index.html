@@ -293,6 +293,21 @@
     </div>
 
     <div>
+      <div class="section-title">글러브 색 보정 (카메라)</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:0.78rem;color:#9ca3af;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="rcEnabled" /> 보정 켜기</label>
+          <button id="rcPick" style="background:#374151;color:#e2e8f0;padding:4px 10px;font-size:0.75rem;">글러브 색 찍기</button>
+          <span id="rcSwatch" style="display:inline-block;width:18px;height:18px;border:1px solid #4b5563;border-radius:4px;"></span>
+          <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="rcPreview" /> 보정 화면 보기</label>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;">허용 범위 <input type="range" id="rcTol" min="5" max="60" style="flex:1;" /> <span id="rcTolVal"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;">밝기 <input type="range" id="rcBright" min="50" max="200" style="flex:1;" /> <span id="rcBrightVal"></span>%</label>
+        <label style="display:flex;align-items:center;gap:6px;">대비 <input type="range" id="rcContrast" min="50" max="200" style="flex:1;" /> <span id="rcContrastVal"></span>%</label>
+      </div>
+    </div>
+
+    <div>
       <div class="section-title">글러브 센서</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
 
@@ -421,6 +436,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-<script type="module" src="src/app.js?v=14"></script>
+<script type="module" src="src/app.js?v=15"></script>
 </body>
 </html>

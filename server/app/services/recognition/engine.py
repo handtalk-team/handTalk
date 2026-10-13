@@ -165,7 +165,10 @@ class HybridRecognitionEngine:
         result: Optional[Tuple[str, float]] = None
         if window is not None and self._onnx_session is not None:
             result = self._onnx_infer(window)
-        # 룰 기반 폴백 비활성화 — ONNX 모델 없으면 추론 안 함
+        elif window is not None:
+            # ONNX 모델이 없으면 카메라 손 모양 규칙으로 폴백
+            # (flex는 카메라로 합성될 수 있어 글러브 규칙은 쓰지 않음)
+            result = self._vision_infer(window)
 
         if result is None:
             return None
@@ -191,11 +194,19 @@ class HybridRecognitionEngine:
 
         Returns None when the gesture doesn't match a known sign.
         """
-        right = window[:, :63].mean(axis=0).reshape(21, 3)
-        left  = window[:, 63:126].mean(axis=0).reshape(21, 3)
+        # 손을 놓친 프레임(카메라 값이 전부 0)은 평균에서 제외
+        def _hand_mean(vis: np.ndarray) -> Optional[np.ndarray]:
+            vis = vis[np.abs(vis).sum(axis=1) > 0]
+            if len(vis) < max(1, len(window) // 3):
+                return None
+            return vis.mean(axis=0).reshape(21, 3)
+
         # 오른손 데이터가 있으면 오른손 사용, 없으면 왼손으로 폴백
-        right_active = bool(np.any(right != 0))
-        lm = right if right_active else left
+        lm = _hand_mean(window[:, :63])
+        if lm is None:
+            lm = _hand_mean(window[:, 63:126])
+        if lm is None:
+            return None
 
         extended = [lm[t, 1] < lm[p, 1] for t, p in zip(_TIPS, _PIPS)]
         thumb, index, middle, ring, pinky = extended
