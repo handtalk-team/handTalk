@@ -94,7 +94,7 @@ class WordTutor(BaseTutor):
         deck = cur.deck(scenario)
         candidates = words or (deck["words"] if deck else [])
         self.title = deck["title"] if deck else "단어 연습"
-        self.words = [w for w in candidates if cur.is_available(w)] or candidates or ["안녕하세요"]
+        self.words = [w for w in candidates if cur.is_available(w)] or candidates or ["감사"]
         self.index = 0
         self.misses = 0
 
@@ -125,7 +125,7 @@ class WordTutor(BaseTutor):
             if self.index >= len(self.words):
                 self.index = len(self.words) - 1
                 return [self._state(done=True),
-                        _reply(f"{random.choice(PRAISE)} 이번 묶음 {len(self.words)}개를 모두 마쳤어요.", "correct", ["감사합니다"])]
+                        _reply(f"{random.choice(PRAISE)} 이번 묶음 {len(self.words)}개를 모두 마쳤어요.", "correct", ["감사"])]
             nxt = self.target
             return [self._state(), _reply(f"{random.choice(PRAISE)} 다음은 {_q(nxt, '이에요예요')}.", "correct", [nxt])]
         self.misses += 1
@@ -202,7 +202,7 @@ class SentenceTutor(BaseTutor):
         self.matched = 0
         if self.turn + 1 >= len(self.sc["turns"]):
             return [self._state(done=True),
-                    _reply(f"{random.choice(PRAISE)} '{self.sc['title']}' 상황을 모두 마쳤어요.", "correct", ["감사합니다"])]
+                    _reply(f"{random.choice(PRAISE)} '{self.sc['title']}' 상황을 모두 마쳤어요.", "correct", ["감사"])]
         self.turn += 1
         return [self._state(), _reply(f"{random.choice(PRAISE)} {self.cur_turn['partner']}", "correct")]
 
@@ -255,7 +255,7 @@ class FreeTalkTutor(BaseTutor):
     async def opening(self) -> list:
         opener = self.topic["opener"]
         self.history.append({"role": "assistant", "content": opener})
-        return [self._state(), _reply(opener, "prompt", ["안녕하세요"])]
+        return [self._state(), _reply(opener, "prompt", ["좋다"])]
 
     async def on_sign(self, result: RecognitionResult) -> list:
         self.attempts += 1
@@ -312,15 +312,15 @@ class FreeTalkTutor(BaseTutor):
         """LLM 없이도 대화가 끊기지 않게 하는 간단한 규칙"""
         s = set(said)
         if s & {"아프다", "감기", "병원"}:
-            return "많이 아프세요? 병원에 가 보는 게 좋겠어요.", ["아프다", "병원"]
-        if s & {"감사", "감사합니다"}:
-            return "천만에요! 또 이야기해요.", ["괜찮다"]
-        if s & {"안녕하세요", "반갑다"}:
-            return "안녕하세요! 만나서 반가워요. 오늘 기분은 어때요?", ["안녕하세요"]
-        if s & {"좋다", "기쁘다"}:
-            return "좋다니 저도 기뻐요! 무슨 일이 있었어요?", ["좋다"]
-        if s & {"슬프다", "피곤하다", "화나다"}:
+            return "많이 아프세요? 병원에 가서 검사를 받아 보세요.", ["아프다", "병원", "검사"]
+        if s & {"감사", "죄송"}:
+            return "괜찮아요! 또 이야기해요.", ["괜찮다"]
+        if s & {"좋다", "즐겁다"}:
+            return "좋다니 저도 즐거워요! 무슨 일이 있었어요?", ["좋다", "즐겁다"]
+        if s & {"슬프다", "피곤하다", "화나다", "무섭다"}:
             return "그랬군요. 괜찮아요, 천천히 이야기해 주세요.", ["괜찮다"]
+        if s & {"밥", "친구", "가족"}:
+            return "좋네요! 가족이나 친구와 밥 먹는 건 즐거워요.", ["가족", "친구", "즐겁다"]
         return f"'{' '.join(said)}'라고 하셨군요. 조금 더 이야기해 줄래요?", []
 
 

@@ -8,13 +8,13 @@ const FALLBACK = {
     { id: 'free_talk', title: '프리토킹', level: '숙련', summary: '튜터와 수어로 자유롭게 대화해요.' },
   ],
   decks: [
-    { id: 'hospital', title: '병원', words: ['병원', '아프다', '의사', '간호사', '약'].map((g) => ({ gloss: g, available: true })) },
+    { id: 'hospital', title: '병원', words: ['병원', '아프다', '의사', '간호사', '검사'].map((g) => ({ gloss: g, available: true })) },
   ],
   scenarios: [
     { id: 'hospital_reception', title: '병원 접수처', place: '병원', goal: '접수처에서 증상을 말하고 진료를 받아요.',
-      turns: [{ partner: '안녕하세요, 어떻게 오셨어요?', text: '안녕하세요, 아파서 왔어요.', gloss: ['안녕하세요', '아프다'], available: true }] },
+      turns: [{ partner: '어떻게 오셨어요?', text: '아파서 왔어요.', gloss: ['아프다'], available: true }] },
   ],
-  topics: [{ id: 'daily', title: '오늘 하루', opener: '안녕하세요! 오늘 하루는 어땠어요?' }],
+  topics: [{ id: 'daily', title: '오늘 하루', opener: '오늘 하루는 어땠어요?' }],
   vocab_size: 0,
   offline: true,
 };
