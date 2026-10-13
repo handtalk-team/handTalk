@@ -331,7 +331,11 @@ class SessionHandler:
     # ─────────────────────── helpers ────────────────────────────
 
     async def _send(self, msg) -> None:
-        await manager.send(self._ws, msg.model_dump())
+        data = msg.model_dump()
+        await manager.send(self._ws, data)
+        # 튜터 응답과 인식 결과는 Unreal 아바타 클라이언트에도 보낸다
+        if data.get("type") in AVATAR_MESSAGE_TYPES:
+            await manager.broadcast_avatar(data)
 
     async def _db_create_session(self) -> None:
         from datetime import datetime
@@ -458,3 +462,19 @@ class SessionHandler:
 async def websocket_endpoint(ws: WebSocket) -> None:
     handler = SessionHandler(ws)
     await handler.run()
+
+
+AVATAR_MESSAGE_TYPES = ("llm_response", "recognition")
+
+
+async def avatar_endpoint(ws: WebSocket) -> None:
+    """Unreal MetaHuman 클라이언트용. 서버 → 클라이언트 단방향 (llm_response, recognition)."""
+    await manager.accept(ws)
+    manager.add_avatar(ws)
+    try:
+        while True:
+            await ws.receive_text()   # 연결 유지용, 내용은 무시
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.remove_avatar(ws)
