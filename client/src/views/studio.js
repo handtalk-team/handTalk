@@ -80,7 +80,8 @@ export function render(root, { mode = 'word', id = '' }) {
     const speech = h('div.speech', '선생님이 준비 중이에요…');
     const glossRow = h('div.gloss-row');
     const badge = h('span.chip', 'AI 선생님');
-    const stage = h('div.avatar-stage', h('div.stage-badge', badge), h('div.stage-caption', glossRow, speech));
+    const demoNote = h('span.chip', { hidden: true, style: { marginLeft: '6px' } }, '이 단어는 시범 영상을 준비 중이에요');
+    const stage = h('div.avatar-stage', h('div.stage-badge', badge, demoNote), h('div.stage-caption', glossRow, speech));
 
     const video = h('video', { autoplay: true, muted: true, playsinline: true });
     const canvas = h('canvas');
@@ -121,8 +122,16 @@ export function render(root, { mode = 'word', id = '' }) {
       avatar = a;
       badge.textContent = a.kind === 'metahuman' ? 'AI 선생님 · 메타휴먼' : 'AI 선생님 · 3D 미리보기';
       if (pendingClips) { a.play(pendingClips); pendingClips = null; }
+      if (pendingDemo) { applyDemo(pendingDemo); pendingDemo = null; }
     });
     let pendingClips = null;
+    let pendingDemo = null;
+    // 단어/문장 모드: 지금 연습할 동작을 선생님이 잠깐씩 쉬며 계속 보여 준다
+    const applyDemo = async (clips) => {
+      if (!avatar) { pendingDemo = clips; return; }
+      const n = await avatar.setDemo(clips);
+      demoNote.hidden = mode === 'free_talk' || n > 0 || !clips;
+    };
     camera = new CameraCapture(video, canvas);
     session.attachCamera(camera);
 
@@ -150,7 +159,10 @@ export function render(root, { mode = 'word', id = '' }) {
       clearTimeout(live._t);
       live._t = setTimeout(() => { live.hidden = true; }, 1800);
     }));
-    offs.push(on('lesson', (l) => renderTarget(target, l, mode)));
+    offs.push(on('lesson', (l) => {
+      renderTarget(target, l, mode);
+      if (mode !== 'free_talk') applyDemo(l.done ? [] : (l.target?.clips || []));
+    }));
     offs.push(on('utterance', (u) => {
       clear(buffer);
       if (!u.gloss.length) buffer.append('수어를 하면 여기에 단어가 모여요. 잠시 멈추면 선생님께 전달돼요.');

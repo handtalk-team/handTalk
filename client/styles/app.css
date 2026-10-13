@@ -205,7 +205,11 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 5px; border-radius
 .gloss { padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 700; background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg-2); }
 .gloss[data-active] { background: var(--brand-600); border-color: var(--brand-600); color: var(--on-brand); }
 .gloss[data-done] { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
-.stage-badge { position: absolute; left: 14px; top: 14px; }
+.stage-badge { position: absolute; left: 14px; top: 14px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+.stage-caption { z-index: 2; }
+/* 대기 중에도 멈춘 사진처럼 보이지 않게 아주 느리게 숨쉬기 */
+.avatar-idle { animation: avatar-breathe 4.5s ease-in-out infinite; transform-origin: 50% 70%; }
+@keyframes avatar-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012) translateY(-2px); } }
 
 .camera-wrap { position: relative; flex: 1; min-height: 0; background: var(--camera-bg); overflow: hidden; }
 .camera-wrap video, .camera-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }

@@ -19,13 +19,14 @@ export async function createAvatarStage(el, opts = {}) {
 export class MetaHumanVideoStage {
   kind = 'metahuman';
   #el; #idle; #video; #queue = []; #onClip; #avail = new Map();
+  #demo = []; #demoTimer = 0;
 
   constructor(el, { onClip } = {}) {
     this.#el = el;
     this.#onClip = onClip;
     const fit = { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'cover', objectPosition: '50% 30%', transition: 'opacity .18s ease' };
     el.style.background = '#cfd2d3';   // 렌더 배경색과 맞춤
-    this.#idle = Object.assign(document.createElement('img'), { src: 'assets/avatar/idle.jpg', alt: 'AI 선생님' });
+    this.#idle = Object.assign(document.createElement('img'), { src: 'assets/avatar/idle.jpg', alt: 'AI 선생님', className: 'avatar-idle' });
     this.#video = Object.assign(document.createElement('video'), { muted: true, playsInline: true, preload: 'auto' });
     Object.assign(this.#idle.style, fit);
     Object.assign(this.#video.style, fit, { opacity: '0' });
@@ -43,23 +44,49 @@ export class MetaHumanVideoStage {
     return this.#avail.get(clip);
   }
 
-  async play(clips = []) {
+  async #filter(clips) {
     const ok = [];
-    for (const c of clips) if (c && await this.#has(c)) ok.push(c);
-    this.#queue = ok;
+    for (const c of clips || []) if (c && await this.#has(c)) ok.push(c);
+    return ok;
+  }
+
+  /** 한 번 재생하고, 끝나면 시범 반복(setDemo)으로 돌아간다 */
+  async play(clips = []) {
+    clearTimeout(this.#demoTimer);
+    this.#queue = await this.#filter(clips);
     this.#next();
-    return ok.length;
+    return this.#queue.length;
+  }
+
+  /** 지금 연습할 단어/문장 시범을 잠깐씩 쉬며 계속 반복한다. 반환값: 재생할 수 있는 클립 수 */
+  async setDemo(clips = []) {
+    this.#demo = await this.#filter(clips);
+    if (!this.#queue.length && this.#video.paused) this.#scheduleDemo(600);
+    return this.#demo.length;
+  }
+
+  #scheduleDemo(ms = 1800) {
+    clearTimeout(this.#demoTimer);
+    if (!this.#demo.length) return;
+    this.#demoTimer = setTimeout(() => {
+      if (!this.#queue.length && this.#video.paused) { this.#queue = [...this.#demo]; this.#next(); }
+    }, ms);
   }
 
   #next() {
     const clip = this.#queue.shift();
     this.#onClip?.(clip || null);
-    if (!clip) { this.#video.style.opacity = '0'; return; }
+    if (!clip) {
+      this.#video.style.opacity = '0';
+      this.#video.pause();
+      this.#scheduleDemo();
+      return;
+    }
     this.#video.src = `assets/avatar/${clip}.mp4`;
     this.#video.play().catch(() => this.#next());
   }
 
-  destroy() { this.#video.pause(); this.#idle.remove(); this.#video.remove(); }
+  destroy() { clearTimeout(this.#demoTimer); this.#video.pause(); this.#idle.remove(); this.#video.remove(); }
 }
 const BODY = [['r_shoulder', 'l_shoulder'], ['neck', 'mid_hip'], ['r_shoulder', 'r_elbow'], ['r_elbow', 'r_wrist'], ['l_shoulder', 'l_elbow'], ['l_elbow', 'l_wrist']];
 const CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]];
@@ -159,6 +186,20 @@ export class AvatarStage {
 
   async has(clip) { return !!(await this.#load(clip)); }
 
+  #demo = [];
+  #demoWait = 0;
+
+  /** 지금 연습할 단어/문장 시범을 계속 반복 */
+  async setDemo(clips = []) {
+    const loaded = [];
+    for (const c of clips || []) {
+      const m = await this.#load(c);
+      if (m) loaded.push({ name: c, ...m });
+    }
+    this.#demo = loaded;
+    return loaded.length;
+  }
+
   async #load(clip) {
     if (!clip) return null;
     if (this.#cache.has(clip)) return this.#cache.get(clip);
@@ -175,6 +216,9 @@ export class AvatarStage {
   }
 
   #next() {
+    if (!this.#queue.length && this.#demo.length && this.#clip) {
+      this.#demoWait = 1.8;   // 한 번 끝나면 잠깐 쉬었다가 시범 반복
+    }
     this.#from = this.#pose;
     this.#blend = 0;
     this.#clip = this.#queue.shift() || null;
@@ -200,6 +244,10 @@ export class AvatarStage {
       if (this.#frame >= this.#clip.frames.length + 8) this.#next();
       target = this.#clip ? this.#frameJoints(this.#clip, this.#frame) : REST;
     } else {
+      if (this.#demo.length) {
+        this.#demoWait -= dt;
+        if (this.#demoWait <= 0) { this.#queue = [...this.#demo]; this.#next(); }
+      }
       // 대기: 살짝 숨쉬기
       const b = Math.sin(now / 900) * 0.012;
       target = {};
