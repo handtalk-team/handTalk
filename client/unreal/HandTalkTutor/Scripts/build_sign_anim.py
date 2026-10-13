@@ -78,6 +78,23 @@ def read_ref_pose(skeleton: unreal.Skeleton) -> tuple[sr.RefPose, dict]:
     return sr.RefPose(world_pos, world_rot, parent), local_t
 
 
+def read_mesh_ref_pose(mesh_path: str) -> tuple[sr.RefPose, dict]:
+    """스켈레톤 대신 특정 메시의 참조 포즈 (같은 스켈레톤을 쓰는 다른 체형용, 예: 키 큰 Vivian)"""
+    mod = unreal.SkeletonModifier()
+    if not mod.set_skeletal_mesh(unreal.load_asset(mesh_path)):
+        raise RuntimeError(f"메시를 읽지 못함: {mesh_path}")
+    world_pos, world_rot, local_t, parent = {}, {}, {}, {}
+    for b in mod.get_all_bone_names():
+        n = str(b)
+        tw = mod.get_bone_transform(b, True)
+        world_pos[n] = _vec(tw.translation)
+        world_rot[n] = _quat(tw.rotation)
+        local_t[n] = mod.get_bone_transform(b, False)
+        p = str(mod.get_parent_name(b))
+        parent[n] = None if p == "None" else p
+    return sr.RefPose(world_pos, world_rot, parent), local_t
+
+
 def build_one(motion_path: str, skeleton: unreal.Skeleton, ref: sr.RefPose, local_t: dict,
               folder: str) -> str:
     with open(motion_path, encoding="utf-8") as f:
@@ -120,6 +137,7 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--motion", required=True)
     ap.add_argument("--skeleton", default=None)
     ap.add_argument("--folder", default=DEFAULT_FOLDER)
+    ap.add_argument("--mesh", default=None, help="참조 포즈를 이 메시에서 읽음 (체형이 다른 메타휴먼)")
     args = ap.parse_args(argv)
 
     files = (sorted(glob.glob(os.path.join(args.motion, "*.motion.json")))
@@ -129,7 +147,7 @@ def main(argv: list[str]) -> None:
 
     skeleton = find_skeleton(args.skeleton)
     unreal.log(f"[handtalk] skeleton={skeleton.get_path_name()}")
-    ref, local_t = read_ref_pose(skeleton)
+    ref, local_t = read_mesh_ref_pose(args.mesh) if args.mesh else read_ref_pose(skeleton)
     for f in files:
         build_one(f, skeleton, ref, local_t, args.folder)
 
