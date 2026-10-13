@@ -9,24 +9,31 @@ Movie Render Queue 로 PNG 프레임을 렌더한다. 프레임 → 영상 변�
     py "C:/handtalk/handTalk/client/unreal/HandTalkTutor/Scripts/render_sign_demo.py"
 """
 
+import sys
 import unreal
 
+METAHUMAN = "--metahuman" in sys.argv   # 마네킹 대신 BP_MHC_Tutor 로 렌더
 CLIPS = ["KSL_hospital", "KSL_hurt", "KSL_doctor", "KSL_okay", "KSL_thank_you"]
 MESH = "/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"
-OUT_DIR = "C:/handtalk/render/frames"
+MH_BP = "/Game/MetaHumans/MHC_Tutor/BP_MHC_Tutor"
+CLIP_FOLDER = "/Game/HandTalk/SignsMH" if METAHUMAN else "/Game/HandTalk/Signs"
+OUT_DIR = "C:/handtalk/render/frames_mh" if METAHUMAN else "C:/handtalk/render/frames"
 LEVEL = "/Game/HandTalk/Demo/SignDemo"
-SEQ_PATH, SEQ_NAME = "/Game/HandTalk/Demo", "LS_SignDemo"
+SEQ_PATH, SEQ_NAME = "/Game/HandTalk/Demo", "LS_SignDemoMH" if METAHUMAN else "LS_SignDemo"
 FPS = 30
-GAP = 12          # 클립 사이 쉬는 프레임
-LEAD = 15         # 시작 전 대기 프레임
-EXPOSURE = -2.0   # 자동 노출 보정 (흰 배경이라 어둡게)
+GAP = 0 if METAHUMAN else 12   # 클립 사이 쉬는 프레임 (비어 있으면 A포즈가 보여서 메타휴먼은 붙인다)
+LEAD = 0 if METAHUMAN else 15  # 시작 전 대기 프레임
+EXPOSURE = 0.5 if METAHUMAN else -1.0   # 자동 노출 보정 (흰 배경이라 어둡게)
 
 eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 
 # ── 레벨: 바닥, 조명, 배경 ──
 if unreal.EditorAssetLibrary.does_asset_exist(LEVEL):
-    les.load_level(LEVEL)
+    try:
+        les.load_level(LEVEL)
+    except RuntimeError as e:   # 메타휴먼 에셋 경고가 예외로 올라와도 레벨은 열린다
+        unreal.log_warning(f"[handtalk] load_level: {e}")
     for a in eas.get_all_level_actors():
         eas.destroy_actor(a)
 else:
@@ -48,13 +55,20 @@ sky.light_component.set_intensity(1.5)
 sky.light_component.recapture_sky()
 
 # ── 캐릭터: 카메라(+Y 쪽)를 보게 ──
-char = eas.spawn_actor_from_class(unreal.SkeletalMeshActor, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0))
-char.skeletal_mesh_component.set_skinned_asset_and_update(unreal.load_asset(MESH))
+if METAHUMAN:
+    char = eas.spawn_actor_from_class(unreal.EditorAssetLibrary.load_blueprint_class(MH_BP), unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0))
+    body = next(c for c in char.get_components_by_class(unreal.SkeletalMeshComponent) if c.get_name() == "Body")
+else:
+    char = eas.spawn_actor_from_class(unreal.SkeletalMeshActor, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0))
+    char.skeletal_mesh_component.set_skinned_asset_and_update(unreal.load_asset(MESH))
+    body = None
 char.set_actor_label("SignTutor")
 
 # 마네킹은 +Y 를 앞으로 본다. 카메라를 +Y 쪽 가슴 높이에 둔다.
-cam = eas.spawn_actor_from_class(unreal.CineCameraActor, unreal.Vector(0, 250, 128), unreal.Rotator(roll=0, pitch=-2, yaw=-90))
-cam.get_cine_camera_component().set_editor_property("current_focal_length", 24.0)
+# 메타휴먼은 상반신(손 모양)이 잘 보이게 더 가까이
+cam_pos, focal = (unreal.Vector(0, 200, 146), 30.0) if METAHUMAN else (unreal.Vector(0, 250, 128), 24.0)
+cam = eas.spawn_actor_from_class(unreal.CineCameraActor, cam_pos, unreal.Rotator(roll=0, pitch=-4, yaw=-90))
+cam.get_cine_camera_component().set_editor_property("current_focal_length", focal)
 pp = cam.get_cine_camera_component().get_editor_property("post_process_settings")
 pp.set_editor_property("override_auto_exposure_bias", True)
 pp.set_editor_property("auto_exposure_bias", EXPOSURE)
@@ -72,11 +86,13 @@ seq.set_display_rate(unreal.FrameRate(FPS, 1))
 seq.set_tick_resolution(unreal.FrameRate(FPS, 1))
 
 bind = seq.add_possessable(char)
+if body is not None:
+    bind = seq.add_possessable(body)   # 메타휴먼은 Body 컴포넌트에 애니메이션 트랙
 track = bind.add_track(unreal.MovieSceneSkeletalAnimationTrack)
 t = LEAD
 marks = []
 for name in CLIPS:
-    anim = unreal.load_asset(f"/Game/HandTalk/Signs/{name}")
+    anim = unreal.load_asset(f"{CLIP_FOLDER}/{name}")
     n = int(round(anim.get_play_length() * FPS)) + 1
     sec = track.add_section()
     sec.set_range(t, t + n)
@@ -101,7 +117,7 @@ les.save_current_level()
 # 클립 구간 기록 (자막 넣을 때 사용)
 import json, os
 os.makedirs(OUT_DIR, exist_ok=True)
-with open(os.path.join(os.path.dirname(OUT_DIR), "marks.json"), "w") as f:
+with open(os.path.join(os.path.dirname(OUT_DIR), "marks_mh.json" if METAHUMAN else "marks.json"), "w") as f:
     json.dump({"fps": FPS, "end": end, "marks": marks}, f)
 
 unreal.log(f"[handtalk] scene ready: {full}  frames={end}")
