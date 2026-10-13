@@ -14,7 +14,7 @@
  *     ← server sends { type: "recognition" | "llm_response" | "feedback" | "system" }
  */
 
-import { CameraCapture } from './camera.js?v=8';
+import { CameraCapture } from './camera.js?v=9';
 import { WSClient } from './websocket_client.js';
 import { UI } from './ui.js?v=14';
 
@@ -150,13 +150,15 @@ const rcEnabled  = document.getElementById('rcEnabled');
 const rcPick     = document.getElementById('rcPick');
 const rcSwatch   = document.getElementById('rcSwatch');
 const rcPreview  = document.getElementById('rcPreview');
-const rcSliders  = { tolerance: 'rcTol', brightness: 'rcBright', contrast: 'rcContrast' };
+const rcSliders  = { tolerance: 'rcTol', brightness: 'rcBright', contrast: 'rcContrast', tipReach: 'rcReach', darkMax: 'rcDarkMax' };
+const rcChecks   = { autoRed: 'rcAutoRed', darkTips: 'rcDarkTips' };
 const canvasEl   = document.getElementById('canvasEl');
 let picking = false;
 
 function renderRecolor() {
   rcEnabled.checked = rc.settings.enabled;
   rcPreview.checked = rc.settings.preview;
+  for (const [k, id] of Object.entries(rcChecks)) document.getElementById(id).checked = rc.settings[k];
   rcSwatch.style.background = rc.settings.color ? `rgb(${rc.settings.color.join(',')})` : 'transparent';
   for (const [k, id] of Object.entries(rcSliders)) {
     document.getElementById(id).value = rc.settings[k];
@@ -166,12 +168,15 @@ function renderRecolor() {
 
 rcEnabled.addEventListener('change', () => {
   rc.settings.enabled = rcEnabled.checked;
-  if (rc.settings.enabled && !rc.settings.color) {
+  if (rc.settings.enabled && !rc.settings.color && !rc.settings.autoRed) {
     ui.addSystemMsg('먼저 "글러브 색 찍기"를 누르고 영상 속 글러브를 클릭하세요.', 'warning');
   }
   saveRecolor();
 });
 rcPreview.addEventListener('change', () => { rc.settings.preview = rcPreview.checked; saveRecolor(); });
+for (const [k, id] of Object.entries(rcChecks)) {
+  document.getElementById(id).addEventListener('change', (e) => { rc.settings[k] = e.target.checked; saveRecolor(); });
+}
 for (const [k, id] of Object.entries(rcSliders)) {
   document.getElementById(id).addEventListener('input', (e) => {
     rc.settings[k] = Number(e.target.value);

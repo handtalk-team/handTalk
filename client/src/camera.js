@@ -16,7 +16,7 @@
  *    switch to sending compressed JPEG frames and run MediaPipe server-side.
  */
 
-import { GloveRecolor } from './glove_recolor.js?v=1';
+import { GloveRecolor } from './glove_recolor.js?v=2';
 
 export class CameraCapture {
   #video;

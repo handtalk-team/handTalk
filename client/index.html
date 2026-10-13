@@ -301,7 +301,13 @@
           <span id="rcSwatch" style="display:inline-block;width:18px;height:18px;border:1px solid #4b5563;border-radius:4px;"></span>
           <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="rcPreview" /> 보정 화면 보기</label>
         </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="rcAutoRed" /> 빨간 장갑 자동</label>
+          <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="rcDarkTips" /> 검은 손끝·코팅 보정</label>
+        </div>
         <label style="display:flex;align-items:center;gap:6px;">허용 범위 <input type="range" id="rcTol" min="5" max="60" style="flex:1;" /> <span id="rcTolVal"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;">검은 부분 범위 <input type="range" id="rcReach" min="10" max="200" style="flex:1;" /> <span id="rcReachVal"></span>px</label>
+        <label style="display:flex;align-items:center;gap:6px;">검은 기준 밝기 <input type="range" id="rcDarkMax" min="40" max="140" style="flex:1;" /> <span id="rcDarkMaxVal"></span></label>
         <label style="display:flex;align-items:center;gap:6px;">밝기 <input type="range" id="rcBright" min="50" max="200" style="flex:1;" /> <span id="rcBrightVal"></span>%</label>
         <label style="display:flex;align-items:center;gap:6px;">대비 <input type="range" id="rcContrast" min="50" max="200" style="flex:1;" /> <span id="rcContrastVal"></span>%</label>
       </div>
@@ -436,6 +442,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-<script type="module" src="src/app.js?v=15"></script>
+<script type="module" src="src/app.js?v=16"></script>
 </body>
 </html>
