@@ -236,7 +236,12 @@ class HybridRecognitionEngine:
             pad = np.zeros((seq.shape[0], expected_dim - seq.shape[1]), dtype=np.float32)
             seq = np.concatenate([seq, pad], axis=1)
         if len(seq) < 60:
-            pad = np.zeros((60 - len(seq), expected_dim), dtype=np.float32)
+            # 학습(ml/training/dataset.py _pad_or_trim)과 같게 마지막 프레임 반복으로 패딩.
+            # 0 패딩은 손 위치가 원점으로 튀어 속도 피처가 망가지고 인식이 거의 안 됨.
+            pad = np.repeat(seq[-1:], 60 - len(seq), axis=0)
+            half = expected_dim // 2
+            if expected_dim % 2 == 0:
+                pad[:, half:] = 0.0   # 멈춘 프레임의 속도 = 0
             seq = np.concatenate([seq, pad], axis=0)
         else:
             seq = seq[:60]
