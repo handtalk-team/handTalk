@@ -53,7 +53,12 @@ from app.models.schemas.ws_messages import (
 from app.services.feedback.engine import FeedbackEngine
 from app.services.llm.pipeline import LLMPipeline
 from app.services.recognition.engine import HybridRecognitionEngine
-from app.services.recognition.glove import BLEGloveSensor, SerialGloveSensor
+from app.services.recognition.glove import (
+    AutoGloveHub,
+    AutoGloveSensor,
+    GloveSensorInterface,
+    SerialGloveSensor,
+)
 from app.services.recognition.vision import ClientVisionCapture, WebcamVisionCapture
 
 logger = logging.getLogger(__name__)
@@ -63,13 +68,15 @@ LATENCY_WARN_MS = 400   # warn if a single frame takes > 400 ms end-to-end
 
 # ── 시리얼 글러브 싱글턴 ─────────────────────────────────────────────
 # 시리얼 포트는 프로세스 전체에서 하나만 열 수 있으므로 모듈 레벨에서 공유
-_glove_right: SerialGloveSensor | BLEGloveSensor = (
+# 포트를 지정하지 않으면 USB 글러브를 자동 감지 (꽂으면 붙고, 없으면 카메라만)
+_glove_hub = AutoGloveHub(settings.GLOVE_BAUD_RATE)
+_glove_right: GloveSensorInterface = (
     SerialGloveSensor(settings.GLOVE_PORT_RIGHT, settings.GLOVE_BAUD_RATE, "R")
-    if settings.GLOVE_PORT_RIGHT else BLEGloveSensor()
+    if settings.GLOVE_PORT_RIGHT else AutoGloveSensor(_glove_hub, "R")
 )
-_glove_left: SerialGloveSensor | BLEGloveSensor = (
+_glove_left: GloveSensorInterface = (
     SerialGloveSensor(settings.GLOVE_PORT_LEFT, settings.GLOVE_BAUD_RATE, "L")
-    if settings.GLOVE_PORT_LEFT else BLEGloveSensor()
+    if settings.GLOVE_PORT_LEFT else AutoGloveSensor(_glove_hub, "L")
 )
 _glove_started = False
 
