@@ -1,4 +1,4 @@
-// handTalk — 서버 /ws/avatar 에 붙어 튜터 응답(avatar_commands)을 받아 수어 클립을 재생한다.
+// handTalk — 서버 /ws/avatar 에 붙어 튜터 응답(avatar_commands)과 학습 단계(lesson)를 받아 수어 클립을 실시간 재생한다.
 
 #pragma once
 
@@ -45,17 +45,33 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	float ReconnectInterval = 3.0f;
 
-	/** 클립을 재생할 메타휴먼 Body 메시. 비워 두면 Owner 의 이름이 "Body" 인 컴포넌트를 찾는다. */
+	/** 클립을 재생할 메타휴먼 액터. 비우면 이 컴포넌트의 Owner. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	TObjectPtr<USkeletalMeshComponent> TargetMesh;
+	TObjectPtr<AActor> TargetActor;
 
-	/** 클립을 찾을 폴더. Clip 이름이 KSL_hello 이면 {ClipFolder}/KSL_hello 를 불러온다. */
+	/**
+	 * 부위(스켈레탈 메시 컴포넌트 이름) → 클립 폴더. 옷 메시가 스켈레톤이 다른 메타휴먼(Vivian)은
+	 * 부위마다 같은 이름의 클립을 따로 만든다 (Scripts/build_vivian_signs.py).
+	 * 비어 있으면 Body 하나에 ClipFolder 를 쓴다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
+	TMap<FName, FString> PartClipFolders;
+
+	/** PartClipFolders 가 비었을 때 Body 에 쓰는 폴더. Clip 이 KSL_hello 면 {ClipFolder}/KSL_hello */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	FString ClipFolder = TEXT("/Game/HandTalk/Signs");
 
-	/** 클립이 없거나 큐가 비었을 때 재생할 대기 동작 (선택) */
+	/** 쉬는 자세: 이 클립의 마지막 프레임을 잡고 있는다 (없으면 마지막 재생 자세 유지) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	TObjectPtr<UAnimSequenceBase> IdleAnim;
+	FName RestClip = TEXT("KSL_hospital");
+
+	/** 학습 단계의 목표 동작을 쉬는 동안 반복할 때의 쉬는 시간(초). 0 이면 반복 안 함 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
+	float DemoInterval = 1.8f;
+
+	/** Play 시작 시 화면을 이 카메라로 (Pixel Streaming 으로 보낼 시점) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
+	TObjectPtr<AActor> ViewCamera;
 
 	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnTutorReply OnTutorReply;
 	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnRecognition OnRecognition;
@@ -74,20 +90,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HandTalk")
 	void PlayClipByName(FName Clip);
 
+	/** 쉬는 동안 반복할 시범 클립 */
+	UFUNCTION(BlueprintCallable, Category = "HandTalk")
+	void SetDemoClips(const TArray<FName>& Clips);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	struct FPart
+	{
+		TWeakObjectPtr<USkeletalMeshComponent> Mesh;
+		FString Folder;
+	};
+
+	void SetupParts();
 	void HandleMessage(const FString& Message);
 	void ScheduleReconnect();
 	void PlayNext();
-	void PlayIdle();
-	UAnimSequenceBase* ResolveClip(FName Clip) const;
+	void Rest();
+	void DemoTick();
+	bool PlayOnParts(FName Clip, float Speed, float& OutLength);
+	UAnimSequenceBase* ResolveClip(const FString& Folder, FName Clip) const;
 
 	TSharedPtr<IWebSocket> Socket;
 	bool bWantConnected = false;
+	bool bPlaying = false;
 	FTimerHandle ReconnectTimer;
 	FTimerHandle ClipTimer;
+	FTimerHandle DemoTimer;
 	TArray<FHandTalkAvatarCommand> Queue;
+	TArray<FName> DemoClips;
+	TArray<FPart> Parts;
 };

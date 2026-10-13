@@ -4,16 +4,55 @@
  *   MetaHumanVideoStage  Unreal 메타휴먼으로 렌더한 클립 영상 (assets/avatar/{clip}.mp4, idle.jpg)
  *   AvatarStage          3D 미리보기 — 키포인트 모션 (assets/motions/{clip}.motion.json) 을 막대 인형으로 재생
  *
+ *   LiveTutorStage       실시간 메타휴먼 — Unreal(TutorLive 레벨)이 서버 /ws/avatar 응답대로 움직이는 화면을
+ *                        Pixel Streaming 으로 받아 보여 준다. 프리토킹처럼 정해지지 않은 대답도 바로 수어로 한다.
+ *
  * 클립 이름은 서버 avatar_commands, Unreal /Game/HandTalk/Signs 와 같다.
  */
+import { loadSettings } from '../core/store.js';
 
-/** 메타휴먼 영상이 있으면 영상 무대, 없으면 3D 미리보기 */
+export function liveTutorUrl() {
+  const s = loadSettings().avatarStreamUrl?.trim();
+  return (s || `http://${location.hostname || 'localhost'}:8080`).replace(/\/$/, '');
+}
+
+/** 실시간 메타휴먼 → 메타휴먼 영상 → 3D 미리보기 순서로 쓸 수 있는 것을 고른다 */
 export async function createAvatarStage(el, opts = {}) {
+  if (loadSettings().liveTutor !== false) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 1500);
+      await fetch(`${liveTutorUrl()}/uiless.html`, { mode: 'no-cors', signal: ctrl.signal });
+      return new LiveTutorStage(el, opts);
+    } catch { /* 실시간 튜터 서버 없음 */ }
+  }
   try {
     const res = await fetch('assets/avatar/idle.jpg', { method: 'HEAD' });
     if (res.ok) return new MetaHumanVideoStage(el, opts);
   } catch { /* 영상 없음 */ }
   return new AvatarStage(el, opts);
+}
+
+export class LiveTutorStage {
+  kind = 'live';
+  #frame;
+
+  constructor(el) {
+    el.style.background = '#cfd2d3';
+    const q = new URLSearchParams({ AutoConnect: 'true', AutoPlayVideo: 'true', StartVideoMuted: 'true', HoveringMouse: 'true', MatchViewportRes: 'false' });
+    this.#frame = Object.assign(document.createElement('iframe'), {
+      src: `${liveTutorUrl()}/uiless.html?${q}`, title: '실시간 AI 선생님', allow: 'autoplay; fullscreen',
+    });
+    Object.assign(this.#frame.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', border: '0' });
+    el.prepend(this.#frame);
+  }
+
+  // 동작은 Unreal 이 서버에서 직접 받는다 (llm_response, lesson)
+  async play() { return 1; }
+
+  async setDemo() { return 1; }
+
+  destroy() { this.#frame.remove(); }
 }
 
 export class MetaHumanVideoStage {

@@ -36,6 +36,8 @@ const DEFAULTS = {
   autoSendPause: true,
   speechCaptions: true,
   name: '',
+  liveTutor: true,       // 실시간 메타휴먼(Pixel Streaming)이 있으면 사용
+  avatarStreamUrl: '',   // 비우면 http://<이 컴퓨터>:8080
 };
 
 export function loadSettings() {

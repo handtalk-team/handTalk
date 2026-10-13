@@ -472,7 +472,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await handler.run()
 
 
-AVATAR_MESSAGE_TYPES = ("llm_response", "recognition")
+AVATAR_MESSAGE_TYPES = ("llm_response", "recognition", "lesson")
 
 
 async def avatar_endpoint(ws: WebSocket) -> None:
