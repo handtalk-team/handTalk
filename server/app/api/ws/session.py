@@ -8,7 +8,7 @@ One coroutine per connected client.  Lifecycle:
     → start_session  (client sends StartSession JSON)
     → frame loop     (client sends FrameMessage JSON at ~30 Hz)
         → sensor fusion   → recognition engine
-        → if recognised: LLM pipeline → avatar commands
+        → if recognised: mode tutor (word / sentence / free_talk) → avatar commands
         → feedback engine (inline)
     → end_session    (client sends EndSession or disconnects)
         → session summary → persist to DB
@@ -51,7 +51,8 @@ from app.models.schemas.ws_messages import (
     SystemMessage,
 )
 from app.services.feedback.engine import FeedbackEngine
-from app.services.llm.pipeline import LLMPipeline
+from app.services.tutor.llm import LLMClient
+from app.services.tutor.tutors import BaseTutor, make_tutor
 from app.services.recognition.engine import HybridRecognitionEngine
 from app.services.recognition.glove import (
     AutoGloveHub,
@@ -104,7 +105,9 @@ class SessionHandler:
 
         self._engine = HybridRecognitionEngine()
         self._feedback = FeedbackEngine()
-        self._llm: Optional[LLMPipeline] = None
+        self._mode: str = "word"
+        self._llm: Optional[LLMClient] = None
+        self._tutor: Optional[BaseTutor] = None
 
         # 글러브 싱글턴 참조 (포트는 모듈 로드 시 한 번만 열림)
         self._glove      = _glove_right
@@ -183,6 +186,10 @@ class SessionHandler:
                     await self._capture_sample(label)
                 else:
                     await self._send(SystemMessage(level="warning", message="레이블을 입력해주세요."))
+            elif msg_type == "tutor_command":
+                if self._running and self._tutor:
+                    for out in await self._tutor.on_command(msg.get("action", "")):
+                        await self._send(out)
             elif msg_type == "end_session":
                 if self._running:
                     await self._handle_end()
@@ -208,14 +215,10 @@ class SessionHandler:
         # Start feedback reference loading (non-blocking)
         asyncio.create_task(self._load_feedback_refs())
 
-        # Start LLM pipeline
-        redis = await get_redis()
-        self._llm = LLMPipeline(
-            session_id=self._session_id,
-            scenario=self._scenario,
-            redis=redis,
-        )
-        await self._llm.start()
+        # 모드별 튜터 (단어 연습 / 상황별 문장 / 프리토킹)
+        self._mode = msg.mode
+        self._llm = LLMClient()
+        self._tutor = make_tutor(msg.mode, msg.scenario, self._llm, msg.words)
 
         self._running = True
 
@@ -224,12 +227,11 @@ class SessionHandler:
 
         await self._send(SystemMessage(
             level="info",
-            message=f"세션 시작! 시나리오: {self._scenario}  ID: {self._session_id}",
+            message=f"세션 시작! 모드: {self._mode} 과정: {self._scenario}  ID: {self._session_id}",
         ))
 
-        # 첫 번째 단어 안내 (LLM 호출 없이 즉시 전송)
-        opening = self._llm.get_opening_message()
-        await self._send(opening)
+        for out in await self._tutor.opening():
+            await self._send(out)
 
     async def _handle_frame(self, raw_msg: dict) -> None:
         t0 = time.perf_counter()
@@ -286,9 +288,9 @@ class SessionHandler:
                 # ── DB 저장 ───────────────────────────────────────────
                 asyncio.create_task(self._db_save_attempt(result))
 
-                # ── LLM response ──────────────────────────────────────
-                llm_resp = await self._llm.chat(result.text)
-                await self._send(llm_resp)
+                # ── 튜터 응답 (모드별) ────────────────────────────────
+                for out in await self._tutor.on_sign(result):
+                    await self._send(out)
 
                 # ── Inline feedback ───────────────────────────────────
                 window = self._engine._fusion.get_window_array()
@@ -301,6 +303,11 @@ class SessionHandler:
                     )
                     if fb.errors:
                         await self._send(fb)
+
+        # ── 프리토킹: 잠깐 멈추면 말이 끝난 것으로 보고 튜터가 답한다 ──
+        if self._tutor:
+            for out in await self._tutor.tick():
+                await self._send(out)
 
         # ── Latency monitoring ────────────────────────────────────
         elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -441,8 +448,9 @@ class SessionHandler:
     async def _between_sessions_cleanup(self) -> None:
         """end_session 후 연결은 유지하면서 이전 세션 리소스만 정리."""
         if self._llm:
-            await self._llm.stop()
+            await self._llm.close()
             self._llm = None
+        self._tutor = None
         self._engine.reset_session()
         # 글러브 센서는 WebSocket 연결 동안 계속 유지
 
@@ -452,7 +460,7 @@ class SessionHandler:
         self._ws_active = False   # broadcast loop 종료
         # 글러브 싱글턴은 서버 프로세스가 살아있는 한 유지 — stop하지 않음
         if self._llm:
-            await self._llm.stop()
+            await self._llm.close()
         self._engine.reset_session()
 
 

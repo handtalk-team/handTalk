@@ -54,3 +54,8 @@ firmware/esp32/managed_components/
 *.pem
 *.key
 server/ml/models/*.task
+
+# AI Hub 에서 만든 모션 데이터는 저장소에 올리지 않는다 (라이선스). ml/avatar/aihub_motion.py 로 생성
+client/assets/motions/*.json
+server/.venv/
+client/assets/avatar/

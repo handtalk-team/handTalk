@@ -32,9 +32,18 @@ class FrameMessage(BaseModel):
 class StartSession(BaseModel):
     type: Literal["start_session"] = "start_session"
     user_id: Optional[str] = None
-    # Scenario narrows the vocabulary used for recognition & LLM prompting
-    # e.g. "free_talk" | "greetings" | "numbers" | "emotions"
-    scenario: str = "free_talk"
+    # 학습 모드: "word" 단어 연습 | "sentence" 상황별 문장 | "free_talk" 프리토킹
+    mode: Literal["word", "sentence", "free_talk"] = "word"
+    # word → 단어 묶음 id, sentence → 시나리오 id, free_talk → 주제 id (services/tutor/curriculum.py)
+    scenario: str = "hospital"
+    # word 모드에서 특정 단어만 연습할 때
+    words: Optional[List[str]] = None
+
+
+class TutorCommand(BaseModel):
+    """학습 중 버튼 동작: 건너뛰기, 힌트, 다시 보기, (프리토킹) 말 보내기/지우기"""
+    type: Literal["tutor_command"] = "tutor_command"
+    action: Literal["skip", "hint", "repeat", "submit", "clear"]
 
 
 class EndSession(BaseModel):
@@ -78,8 +87,39 @@ class LLMResponse(BaseModel):
     avatar_commands: List[AvatarCommand]
     # Tokens used — useful for monitoring API costs
     tokens_used: int = 0
-    # prompt: 새 단어 안내 | correct: 정답 + 다음 단어 | feedback: 오답 교정
-    kind: Literal["prompt", "correct", "feedback"] = "prompt"
+    # prompt: 새 단어 안내 | correct: 정답 + 다음 단어 | feedback: 오답 교정 | reply: 프리토킹 답
+    kind: Literal["prompt", "correct", "feedback", "reply", "hint"] = "prompt"
+    # 튜터가 수어로 표현하는 글로스 순서 (아바타 클립과 자막에 사용)
+    gloss: List[str] = []
+
+
+class LessonTarget(BaseModel):
+    gloss: List[str]                     # 표현해야 할 글로스 순서
+    text: str                            # 자연스러운 한국어 문장
+    description: Optional[str] = None    # 동작 설명 (단어 모드)
+    clips: List[str] = []                # 아바타 시범 클립
+    matched: int = 0                     # 지금까지 순서대로 맞춘 글로스 수
+
+
+class LessonState(BaseModel):
+    """현재 학습 단계 — 화면의 목표 카드, 진행률, 상대방 대사를 그린다."""
+    type: Literal["lesson"] = "lesson"
+    mode: str
+    title: str
+    step: int
+    total: int
+    target: Optional[LessonTarget] = None
+    partner_line: Optional[str] = None   # 상황/프리토킹에서 상대(튜터)의 말
+    correct: int = 0
+    attempts: int = 0
+    done: bool = False
+
+
+class Utterance(BaseModel):
+    """프리토킹: 사용자가 지금까지 수어로 말한 글로스 (보내기 전 버퍼)"""
+    type: Literal["utterance"] = "utterance"
+    gloss: List[str]
+    final: bool = False
 
 
 class InlineError(BaseModel):
