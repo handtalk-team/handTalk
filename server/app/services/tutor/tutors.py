@@ -55,7 +55,7 @@ def _q(word: str, pair: str) -> str:
 
 
 def _clips(gloss: List[str]) -> List[str]:
-    return [c for c in (cur.GLOSS_TO_CLIP.get(g) for g in gloss) if c]
+    return [c for c in (cur.clip_for(g) for g in gloss) if c]
 
 
 class BaseTutor:

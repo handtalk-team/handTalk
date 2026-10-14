@@ -140,6 +140,7 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--skeleton", default=None)
     ap.add_argument("--folder", default=DEFAULT_FOLDER)
     ap.add_argument("--mesh", default=None, help="참조 포즈를 이 메시에서 읽음 (체형이 다른 메타휴먼)")
+    ap.add_argument("--skip-existing", action="store_true", help="이미 있는 클립은 건너뜀 (수천 개 일괄 생성용)")
     args = ap.parse_args(argv)
 
     files = (sorted(glob.glob(os.path.join(args.motion, "*.motion.json")))
@@ -150,8 +151,21 @@ def main(argv: list[str]) -> None:
     skeleton = find_skeleton(args.skeleton)
     unreal.log(f"[handtalk] skeleton={skeleton.get_path_name()}")
     ref, local_t = read_mesh_ref_pose(args.mesh) if args.mesh else read_ref_pose(skeleton)
-    for f in files:
-        build_one(f, skeleton, ref, local_t, args.folder)
+    made = skipped = failed = 0
+    for i, f in enumerate(files, 1):
+        clip = os.path.basename(f).split(".")[0]
+        if args.skip_existing and unreal.EditorAssetLibrary.does_asset_exist(f"{args.folder}/{clip}"):
+            skipped += 1
+            continue
+        try:
+            build_one(f, skeleton, ref, local_t, args.folder)
+            made += 1
+        except Exception as e:   # 한 클립이 실패해도 나머지는 계속
+            failed += 1
+            unreal.log_warning(f"[handtalk] {clip} 실패: {e}")
+        if i % 200 == 0:
+            unreal.log(f"[handtalk] progress {i}/{len(files)} made={made} skipped={skipped} failed={failed}")
+    unreal.log(f"[handtalk] done {args.folder}: made={made} skipped={skipped} failed={failed}")
 
 
 if __name__ == "__main__":

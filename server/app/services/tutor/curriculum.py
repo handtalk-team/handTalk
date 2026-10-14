@@ -139,6 +139,31 @@ GLOSS_TO_CLIP: Dict[str, str] = {
 }
 
 
+# 전체 단어 사전 (AI Hub 3000단어 모션을 가져오면 생김: client/unreal/.../Scripts/import_motion_zip.py)
+# AI Hub 데이터에서 나온 목록이라 저장소에 없고, 없으면 위 GLOSS_TO_CLIP 만 쓴다.
+LEXICON_PATH = os.environ.get(
+    "HANDTALK_LEXICON",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "client", "assets", "lexicon.json"))
+
+
+@lru_cache(maxsize=1)
+def lexicon() -> Dict[str, str]:
+    """글로스 → 아바타 클립 (사전 + 직접 지정한 이름)"""
+    out: Dict[str, str] = {}
+    try:
+        import json
+        with open(LEXICON_PATH, encoding="utf-8") as f:
+            out = {e["gloss"]: e["clip"] for e in json.load(f)}
+    except (OSError, ValueError, KeyError):
+        pass
+    out.update(GLOSS_TO_CLIP)
+    return out
+
+
+def clip_for(gloss: str) -> Optional[str]:
+    return lexicon().get(gloss)
+
+
 # ─────────────────────── 조회 ───────────────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -161,7 +186,7 @@ def word_entry(word: str) -> dict:
         "gloss": word,
         "available": is_available(word),
         "description": KSL_DESCRIPTIONS.get(word),
-        "clip": GLOSS_TO_CLIP.get(word),
+        "clip": clip_for(word),
     }
 
 
@@ -193,4 +218,5 @@ def catalog() -> dict:
         ],
         "topics": FREE_TALK_TOPICS,
         "vocab_size": len(vocab),
+        "avatar_signs": len(lexicon()),
     }

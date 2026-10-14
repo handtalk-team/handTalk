@@ -142,10 +142,10 @@ class AvatarController:
     @classmethod
     def from_glosses(cls, glosses: List[str]) -> List[AvatarCommand]:
         """튜터 글로스 순서 → 아바타 클립. 클립이 없는 단어는 사전 매핑으로 찾고, 그래도 없으면 건너뛴다."""
-        from app.services.tutor.curriculum import GLOSS_TO_CLIP
+        from app.services.tutor.curriculum import clip_for
         commands: List[AvatarCommand] = []
         for g in glosses:
-            clip = GLOSS_TO_CLIP.get(g)
+            clip = clip_for(g)
             if clip is None:
                 clip, _ = cls._find_next_clip(g)
             if clip:

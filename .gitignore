@@ -59,3 +59,4 @@ server/ml/models/*.task
 client/assets/motions/*.json
 server/.venv/
 client/assets/avatar/
+client/assets/lexicon.json
