@@ -106,6 +106,8 @@ def build_one(motion_path: str, skeleton: unreal.Skeleton, ref: sr.RefPose, loca
     tracks = rt.solve_motion(motion)
     n = len(motion["frames"])
     fps = int(round(motion.get("fps", 30)))
+    if abs(fps - 30) <= 2:   # AI Hub 영상은 30fps (프레임 수/길이로 추정하면 29.x 가 나올 수 있음)
+        fps = 30
 
     asset_path = f"{folder}/{clip}"
     if unreal.EditorAssetLibrary.does_asset_exist(asset_path):

@@ -13,6 +13,8 @@ CUR = open(os.path.join(ROOT, "server", "app", "services", "tutor", "curriculum.
 block = CUR[CUR.index("GLOSS_TO_CLIP"):]
 block = block[:block.index("}") + 1]
 MAP = dict(re.findall(r'"([^"]+)":\s*"(KSL_[^"]+)"', block))
+# 노트북이 요청 단어 이름으로 저장한 대체 라벨 파일 (AI Hub 에 없는 단어 → 가장 가까운 라벨)
+ALIAS = {"미안하다": "죄송", "기쁘다": "즐겁다"}
 
 src, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
@@ -22,6 +24,7 @@ with zipfile.ZipFile(src) as z:
         if not name.endswith(".json"):
             continue
         word = os.path.basename(name).split(".")[0]
+        word = ALIAS.get(word, word)
         clip = MAP.get(word)
         if not clip:
             print("skip (no clip name):", name)
