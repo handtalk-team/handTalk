@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # "groq"    : 무료 클라우드 API (GROQ_API_KEY 필요, 속도 매우 빠름)
     # "claude"  : Anthropic Claude (ANTHROPIC_API_KEY 필요, 유료)
     LLM_PROVIDER: str = "ollama"
+    # claude_code: 이 컴퓨터에 로그인된 Claude Code 를 요청마다 실행
+    CLAUDE_CODE_PATH: str = ""
+    CLAUDE_CODE_MODEL: str = ""
+    CLAUDE_CODE_TIMEOUT: float = 40.0
 
     # Ollama 설정 (로컬 무료)
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"

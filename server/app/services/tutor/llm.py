@@ -77,16 +77,16 @@ class LLMClient:
         """대화 기록을 한 프롬프트로 묶어 Claude Code 를 한 번 실행하고 답만 받는다 (도구 사용 없음)."""
         convo = "\n".join(f"{'튜터' if m['role'] == 'assistant' else '사용자'}: {m['content']}" for m in messages)
         prompt = f"{convo}\n\n위 대화에 이어 튜터의 다음 답을 규칙대로 출력하세요."
-        args = [self._cc_path, "-p", prompt, "--output-format", "json", "--max-turns", "1",
+        args = [self._cc_path, "-p", "--output-format", "json", "--max-turns", "1",
                 "--system-prompt", system, "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch,Glob,Grep,Task"]
-        model = os.environ.get("CLAUDE_CODE_MODEL", "")
+        model = settings.CLAUDE_CODE_MODEL
         if model:
             args += ["--model", model]
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=os.path.expanduser("~"))
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=float(os.environ.get("CLAUDE_CODE_TIMEOUT", "40")))
+            out, err = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout=settings.CLAUDE_CODE_TIMEOUT)
         except asyncio.TimeoutError:
             proc.kill()
             logger.error("Claude Code 응답 시간 초과")
@@ -122,7 +122,7 @@ def is_korean_only(text: str) -> bool:
 
 def find_claude_code() -> Optional[str]:
     """CLAUDE_CODE_PATH, PATH 의 claude, 또는 Claude 데스크톱 앱에 들어 있는 최신 claude.exe"""
-    path = os.environ.get("CLAUDE_CODE_PATH")
+    path = settings.CLAUDE_CODE_PATH or os.environ.get("CLAUDE_CODE_PATH")
     if path and os.path.exists(path):
         return path
     import shutil
