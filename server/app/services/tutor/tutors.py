@@ -231,7 +231,7 @@ FREE_TALK_SYSTEM = """당신은 청각장애인과 한국 수어로 대화하는
 2. 대화를 이어 가도록 가끔 쉬운 질문을 합니다.
 3. 아래 JSON 한 줄로만 답합니다. 다른 글은 쓰지 않습니다.
    {"reply": "자연스러운 한국어 답", "gloss": ["수어로 표현할 핵심 단어", "..."]}
-4. gloss 는 3개 이하, 가능하면 다음 단어 목록에서 고릅니다: {vocab}"""
+4. gloss 는 답의 핵심을 수어 어순으로 5개 이하, 반드시 다음 단어 목록에 있는 단어만 씁니다: {vocab}"""
 
 PAUSE_TO_SEND_S = 2.5   # 마지막 인식 후 이만큼 조용하면 말이 끝난 것으로 본다
 
@@ -292,7 +292,8 @@ class FreeTalkTutor(BaseTutor):
         return [Utterance(gloss=said, final=True), self._state(), _reply(reply, "reply", gloss)]
 
     async def _ask_llm(self):
-        vocab = ", ".join(sorted({w for d in cur.WORD_DECKS for w in d["words"]}))
+        # 선생님이 수어로 할 수 있는 단어 전체 (3000단어 사전이 있으면 그 전체)
+        vocab = ", ".join(sorted(cur.lexicon()))
         raw = await self.llm.complete(FREE_TALK_SYSTEM.replace("{vocab}", vocab), self.history,
                                       max_tokens=200)
         if raw:
@@ -300,7 +301,7 @@ class FreeTalkTutor(BaseTutor):
             try:
                 data = json.loads(m.group(0)) if m else {}
                 reply = str(data.get("reply", "")).strip()
-                gloss = [str(g) for g in data.get("gloss", [])][:3]
+                gloss = [str(g) for g in data.get("gloss", []) if cur.clip_for(str(g))][:5]
                 if reply and is_korean_only(reply):
                     return reply, gloss
             except (ValueError, AttributeError):

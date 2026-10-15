@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.avatar import router as avatar_router
 from app.api.routes.curriculum import router as curriculum_router
 from app.api.routes.feedback import router as feedback_router
 from app.api.routes.sessions import router as sessions_router
@@ -59,6 +60,7 @@ app.add_middleware(
 app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(curriculum_router, prefix="/api/v1")
+app.include_router(avatar_router, prefix="/api/v1")
 
 # ── Serve web client static files ────────────────────────────────
 import mimetypes
