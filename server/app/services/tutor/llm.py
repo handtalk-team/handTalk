@@ -1,11 +1,20 @@
 """
-LLM 호출 래퍼 — 프로바이더(ollama / groq / claude)를 감춘다.
-LLM_PROVIDER 설정이 없거나 패키지/키가 없으면 available=False 이고, 튜터는 규칙 기반으로 동작한다.
+LLM 호출 래퍼 — 프로바이더를 감춘다.
+
+  claude_code  이 컴퓨터에 로그인된 Claude Code 를 요청마다 비대화형(-p)으로 실행 (API 키 없이, 시연용)
+  claude       Anthropic API (ANTHROPIC_API_KEY, 정식 서비스용)
+  ollama/groq  OpenAI 호환 API
+
+LLM_PROVIDER 설정이 없거나 사용할 수 없으면 available=False 이고, 튜터는 규칙 기반으로 동작한다.
 """
 
 from __future__ import annotations
 
+import asyncio
+import glob
+import json
 import logging
+import os
 from typing import List, Optional
 
 from app.core.config import get_settings
@@ -18,8 +27,13 @@ class LLMClient:
     def __init__(self) -> None:
         self.provider = settings.LLM_PROVIDER
         self._client = None
+        self._cc_path: Optional[str] = None
         try:
-            if self.provider in ("ollama", "groq"):
+            if self.provider == "claude_code":
+                self._cc_path = find_claude_code()
+                if self._cc_path:
+                    self._client = "claude_code"
+            elif self.provider in ("ollama", "groq"):
                 from openai import AsyncOpenAI
                 if self.provider == "ollama":
                     self._client = AsyncOpenAI(base_url=settings.OLLAMA_BASE_URL, api_key="ollama")
@@ -43,6 +57,8 @@ class LLMClient:
         if not self._client:
             return None
         try:
+            if self.provider == "claude_code":
+                return await self._claude_code(system, messages)
             if self.provider == "claude":
                 resp = await self._client.messages.create(
                     model=settings.ANTHROPIC_MODEL, max_tokens=max_tokens,
@@ -57,8 +73,34 @@ class LLMClient:
             logger.error("LLM 호출 실패: %s", e)
             return None
 
+    async def _claude_code(self, system: str, messages: List[dict]) -> Optional[str]:
+        """대화 기록을 한 프롬프트로 묶어 Claude Code 를 한 번 실행하고 답만 받는다 (도구 사용 없음)."""
+        convo = "\n".join(f"{'튜터' if m['role'] == 'assistant' else '사용자'}: {m['content']}" for m in messages)
+        prompt = f"{convo}\n\n위 대화에 이어 튜터의 다음 답을 규칙대로 출력하세요."
+        args = [self._cc_path, "-p", prompt, "--output-format", "json", "--max-turns", "1",
+                "--system-prompt", system, "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch,Glob,Grep,Task"]
+        model = os.environ.get("CLAUDE_CODE_MODEL", "")
+        if model:
+            args += ["--model", model]
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=os.path.expanduser("~"))
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=float(os.environ.get("CLAUDE_CODE_TIMEOUT", "40")))
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.error("Claude Code 응답 시간 초과")
+            return None
+        if proc.returncode != 0:
+            logger.error("Claude Code 실패 (%s): %s", proc.returncode, (out or err).decode("utf-8", "replace")[:300])
+            return None
+        try:
+            return str(json.loads(out.decode("utf-8")).get("result", "")).strip() or None
+        except ValueError:
+            return out.decode("utf-8", "replace").strip() or None
+
     async def close(self) -> None:
-        if self._client and hasattr(self._client, "close"):
+        if self._client and not isinstance(self._client, str) and hasattr(self._client, "close"):
             try:
                 await self._client.close()
             except Exception:
@@ -76,3 +118,17 @@ def is_korean_only(text: str) -> bool:
     ascii_alpha = sum(1 for c in text if ord(c) < 128 and c.isalpha())
     total_alpha = sum(1 for c in text if c.isalpha())
     return not (total_alpha and ascii_alpha / total_alpha > 0.3)
+
+
+def find_claude_code() -> Optional[str]:
+    """CLAUDE_CODE_PATH, PATH 의 claude, 또는 Claude 데스크톱 앱에 들어 있는 최신 claude.exe"""
+    path = os.environ.get("CLAUDE_CODE_PATH")
+    if path and os.path.exists(path):
+        return path
+    import shutil
+    found = shutil.which("claude")
+    if found:
+        return found
+    appdata = os.environ.get("APPDATA", "")
+    cands = glob.glob(os.path.join(appdata, "Claude", "claude-code", "*", "*", "claude.exe"))
+    return max(cands, key=os.path.getmtime) if cands else None
