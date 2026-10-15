@@ -76,9 +76,11 @@ class LLMClient:
     async def _claude_code(self, system: str, messages: List[dict]) -> Optional[str]:
         """대화 기록을 한 프롬프트로 묶어 Claude Code 를 한 번 실행하고 답만 받는다 (도구 사용 없음)."""
         convo = "\n".join(f"{'튜터' if m['role'] == 'assistant' else '사용자'}: {m['content']}" for m in messages)
-        prompt = f"{convo}\n\n위 대화에 이어 튜터의 다음 답을 규칙대로 출력하세요."
+        # 지시문은 단어 목록(수천 개) 때문에 길어서 명령줄 대신 stdin 으로 보낸다
+        prompt = (f"<지시>\n{system}\n</지시>\n\n<대화>\n{convo}\n</대화>\n\n"
+                  "위 대화에 이어 튜터의 다음 답을 지시대로 출력하세요.")
         args = [self._cc_path, "-p", "--output-format", "json", "--max-turns", "1",
-                "--system-prompt", system, "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch,Glob,Grep,Task"]
+                "--system-prompt", "당신은 한국 수어 튜터입니다. 입력의 <지시>를 그대로 따르고, 정해진 형식으로만 답합니다.", "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch,Glob,Grep,Task"]
         model = settings.CLAUDE_CODE_MODEL
         if model:
             args += ["--model", model]

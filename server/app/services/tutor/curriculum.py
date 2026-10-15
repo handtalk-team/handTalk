@@ -164,6 +164,26 @@ def clip_for(gloss: str) -> Optional[str]:
     return lexicon().get(gloss)
 
 
+SIGN_MODEL_META = os.path.join(os.environ.get("HANDTALK_SIGN_MODEL", r"C:\handtalk\models\sign_motion"), "meta.json")
+
+
+@lru_cache(maxsize=1)
+def sign_vocab() -> frozenset:
+    """선생님이 수어로 할 수 있는 단어: 단어 사전 + 동작 생성 모델이 배운 단어 (AI Hub 문장 단어 포함)"""
+    words = set(lexicon())
+    try:
+        import json
+        with open(SIGN_MODEL_META, encoding="utf-8") as f:
+            words |= set(json.load(f)["vocab"])
+    except (OSError, ValueError, KeyError):
+        pass
+    return frozenset(words)
+
+
+def can_sign(gloss: str) -> bool:
+    return gloss in sign_vocab()
+
+
 # ─────────────────────── 조회 ───────────────────────────────────────
 
 @lru_cache(maxsize=1)

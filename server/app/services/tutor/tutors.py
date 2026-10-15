@@ -309,7 +309,7 @@ class FreeTalkTutor(BaseTutor):
 
     async def _ask_llm(self):
         # 선생님이 수어로 할 수 있는 단어 전체 (3000단어 사전이 있으면 그 전체)
-        vocab = ", ".join(sorted(cur.lexicon()))
+        vocab = ", ".join(sorted(cur.sign_vocab()))
         raw = await self.llm.complete(FREE_TALK_SYSTEM.replace("{vocab}", vocab), self.history,
                                       max_tokens=200)
         if raw:
@@ -317,7 +317,7 @@ class FreeTalkTutor(BaseTutor):
             try:
                 data = json.loads(m.group(0)) if m else {}
                 reply = str(data.get("reply", "")).strip()
-                gloss = [str(g) for g in data.get("gloss", []) if cur.clip_for(str(g))][:5]
+                gloss = [str(g) for g in data.get("gloss", []) if cur.can_sign(str(g))][:5]
                 if reply and is_korean_only(reply):
                     return reply, gloss
             except (ValueError, AttributeError):
