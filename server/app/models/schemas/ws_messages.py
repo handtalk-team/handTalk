@@ -120,6 +120,7 @@ class Utterance(BaseModel):
     type: Literal["utterance"] = "utterance"
     gloss: List[str]
     final: bool = False
+    thinking: bool = False   # 튜터가 답을 만드는 중 (Claude 응답 대기)
 
 
 class InlineError(BaseModel):

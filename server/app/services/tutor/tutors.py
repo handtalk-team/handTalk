@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
 import re
 import time
-from typing import List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from app.models.schemas.ws_messages import (
     LessonState,
@@ -66,6 +67,8 @@ class BaseTutor:
         self.llm = llm
         self.correct = 0
         self.attempts = 0
+        # 오래 걸리는 답(LLM)을 나중에 보내는 콜백. 세션이 넣어 준다.
+        self.emit: Optional[Callable[[list], Awaitable[None]]] = None
 
     async def opening(self) -> list:
         return []
@@ -286,10 +289,23 @@ class FreeTalkTutor(BaseTutor):
         self.turns += 1
         self.correct += 1
         self.history.append({"role": "user", "content": " ".join(said)})
+        if self.emit:
+            # 답에 몇 초 걸리므로 영상 처리를 막지 않게 따로 돌리고, 그동안 '생각 중'을 띄운다
+            asyncio.create_task(self._answer_later())
+            return [Utterance(gloss=said, final=True, thinking=True)]
+        return [Utterance(gloss=said, final=True)] + await self._answer()
+
+    async def _answer(self) -> list:
         reply, gloss = await self._ask_llm()
         self.history.append({"role": "assistant", "content": reply})
         self.history = self.history[-12:]
-        return [Utterance(gloss=said, final=True), self._state(), _reply(reply, "reply", gloss)]
+        return [self._state(), _reply(reply, "reply", gloss)]
+
+    async def _answer_later(self) -> None:
+        try:
+            await self.emit(await self._answer())
+        except Exception:   # 세션이 이미 끝났으면 보낼 곳이 없다
+            logger.exception("프리토킹 답 전송 실패")
 
     async def _ask_llm(self):
         # 선생님이 수어로 할 수 있는 단어 전체 (3000단어 사전이 있으면 그 전체)

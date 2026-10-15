@@ -94,6 +94,7 @@ export function render(root, { mode = 'word', id = '' }) {
 
     const target = h('div.target-card');
     const transcript = h('div.transcript');
+    let thinking = null;   // 프리토킹: 선생님이 답을 만드는 동안 보이는 말풍선
     const buffer = h('div.buffer', '수어를 하면 여기에 단어가 모여요. 잠시 멈추면 선생님께 전달돼요.');
     const controls = h('div.controls',
       h('button.btn', { onclick: () => session.command('hint') }, icon('hint', 16), '힌트'),
@@ -143,6 +144,7 @@ export function render(root, { mode = 'word', id = '' }) {
       if (avatar) avatar.play(clips); else pendingClips = clips;
     }));
     offs.push(on('transcript', (e) => {
+      if (e.who === 'tutor') { thinking?.remove(); thinking = null; }
       const cls = e.who === 'me' ? 'me' : e.who === 'sys' ? 'sys' : `tutor${e.kind === 'feedback' || e.kind === 'hint' ? '.feedback' : e.kind === 'correct' ? '.correct' : ''}`;
       transcript.append(h(`div.bubble.${cls}`,
         e.who === 'tutor' ? h('span.k', KIND[e.kind] || '선생님') : null,
@@ -167,6 +169,12 @@ export function render(root, { mode = 'word', id = '' }) {
       clear(buffer);
       if (!u.gloss.length) buffer.append('수어를 하면 여기에 단어가 모여요. 잠시 멈추면 선생님께 전달돼요.');
       else buffer.append(...u.gloss.map((g) => h('span.gloss', g)), u.final ? h('span.muted', ' 전달됨') : null);
+      if (u.thinking) {
+        thinking?.remove();
+        thinking = h('div.bubble.tutor.thinking', h('span.k', '선생님'), h('span.dots', h('i'), h('i'), h('i')));
+        transcript.append(thinking);
+        transcript.scrollTop = transcript.scrollHeight;
+      }
     }));
     offs.push(on('hands', ({ right, left }) => {
       const n = (right ? 1 : 0) + (left ? 1 : 0);

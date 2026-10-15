@@ -219,6 +219,7 @@ class SessionHandler:
         self._mode = msg.mode
         self._llm = LLMClient()
         self._tutor = make_tutor(msg.mode, msg.scenario, self._llm, msg.words)
+        self._tutor.emit = self._send_all
 
         self._running = True
 
@@ -336,6 +337,11 @@ class SessionHandler:
         )
 
     # ─────────────────────── helpers ────────────────────────────
+
+    async def _send_all(self, msgs: list) -> None:
+        if self._running:
+            for m in msgs:
+                await self._send(m)
 
     async def _send(self, msg) -> None:
         data = msg.model_dump()
