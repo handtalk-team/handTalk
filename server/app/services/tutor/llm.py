@@ -131,4 +131,8 @@ def find_claude_code() -> Optional[str]:
         return found
     appdata = os.environ.get("APPDATA", "")
     cands = glob.glob(os.path.join(appdata, "Claude", "claude-code", "*", "*", "claude.exe"))
+    # 스토어(MSIX)판 Claude 앱은 AppData 가 패키지 폴더로 가려져 있어 앱 밖에서는 여기서만 보인다
+    local = os.environ.get("LOCALAPPDATA", "")
+    cands += glob.glob(os.path.join(local, "Packages", "Claude_*", "LocalCache", "Roaming", "Claude",
+                                    "claude-code", "*", "*", "claude.exe"))
     return max(cands, key=os.path.getmtime) if cands else None
