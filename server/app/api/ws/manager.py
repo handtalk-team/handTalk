@@ -7,9 +7,10 @@ Provides broadcast helpers and per-session send wrappers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 from fastapi import WebSocket
 
@@ -22,6 +23,8 @@ class ConnectionManager:
         self._sessions: Dict[str, Set[WebSocket]] = defaultdict(set)
         # Unreal MetaHuman 클라이언트 (/ws/avatar) — 튜터 응답을 받기만 한다
         self._avatars: Set[WebSocket] = set()
+        self._motion_q: Optional[asyncio.Queue] = None
+        self._motion_task: Optional[asyncio.Task] = None
 
     async def accept(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -61,6 +64,37 @@ class ConnectionManager:
         logger.info("Avatar client disconnected  total=%d", len(self._avatars))
 
     async def broadcast_avatar(self, data: dict) -> None:
+        await self._send_avatars(data)
+        # 튜터 답/학습 목표는 실시간 동작으로도 만들어 보낸다 (순서를 지키려고 한 줄로 처리)
+        if data.get("type") in ("llm_response", "lesson") and self._avatars:
+            self._ensure_motion_worker()
+            self._motion_q.put_nowait(data)
+
+    async def send_rest(self, ws: WebSocket) -> None:
+        """새로 붙은 아바타를 쉬는 자세로"""
+        from app.services.avatar.motion_synth import get_synth
+        synth = await asyncio.to_thread(get_synth)
+        msg = synth.rest() if synth else None
+        if msg:
+            await ws.send_json(msg)
+
+    def _ensure_motion_worker(self) -> None:
+        if self._motion_task is None or self._motion_task.done():
+            self._motion_q = asyncio.Queue()
+            self._motion_task = asyncio.create_task(self._motion_worker())
+
+    async def _motion_worker(self) -> None:
+        from app.services.avatar.motion_synth import motion_for
+        while True:
+            data = await self._motion_q.get()
+            try:
+                msg = await asyncio.to_thread(motion_for, data)
+                if msg:
+                    await self._send_avatars(msg)
+            except Exception:
+                logger.exception("실시간 동작 생성 실패")
+
+    async def _send_avatars(self, data: dict) -> None:
         dead: list[WebSocket] = []
         for ws in self._avatars:
             try:

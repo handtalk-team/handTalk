@@ -1,6 +1,7 @@
 // handTalk — 서버 /ws/avatar 에 붙어 튜터 응답(avatar_commands)과 학습 단계(lesson)를 받아 수어 클립을 실시간 재생한다.
 
 #include "HandTalkAvatarLink.h"
+#include "HandTalkLiveAnimInstance.h"
 
 #include "Animation/AnimSequenceBase.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -166,7 +167,11 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 	}
 
 	const FString Type = Root->GetStringField(TEXT("type"));
-	if (Type == TEXT("llm_response"))
+	if (Type == TEXT("motion"))
+	{
+		HandleMotion(Root);
+	}
+	else if (Type == TEXT("llm_response"))
 	{
 		TArray<FHandTalkAvatarCommand> Commands;
 		const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
@@ -186,7 +191,10 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 			}
 		}
 		OnTutorReply.Broadcast(Root->GetStringField(TEXT("text")), Commands);
-		PlayCommands(Commands);
+		if (!bLiveActive)
+		{
+			PlayCommands(Commands);   // 실시간 동작이 오면 그걸로 움직인다
+		}
 	}
 	else if (Type == TEXT("lesson"))
 	{
@@ -203,7 +211,10 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 				for (const TSharedPtr<FJsonValue>& V : *Items) Clips.Add(FName(*V->AsString()));
 			}
 		}
-		SetDemoClips(Clips);
+		if (!bLiveActive)
+		{
+			SetDemoClips(Clips);
+		}
 	}
 	else if (Type == TEXT("recognition"))
 	{
@@ -211,6 +222,80 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 		Root->TryGetNumberField(TEXT("confidence"), Confidence);
 		OnRecognition.Broadcast(Root->GetStringField(TEXT("text")), static_cast<float>(Confidence));
 	}
+}
+
+void UHandTalkAvatarLink::EnterLiveMode()
+{
+	if (bLiveActive)
+	{
+		return;
+	}
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ClipTimer);
+		World->GetTimerManager().ClearTimer(DemoTimer);
+	}
+	Queue.Reset();
+	DemoClips.Reset();
+	bPlaying = false;
+	LivePlayer = MakeShared<FHandTalkLivePlayer>();
+	for (const FPart& Part : Parts)
+	{
+		USkeletalMeshComponent* Mesh = Part.Mesh.Get();
+		if (!Mesh) continue;
+		Mesh->SetAnimInstanceClass(UHandTalkLiveAnimInstance::StaticClass());
+		if (UHandTalkLiveAnimInstance* Inst = Cast<UHandTalkLiveAnimInstance>(Mesh->GetAnimInstance()))
+		{
+			Inst->Player = LivePlayer;
+		}
+	}
+	bLiveActive = true;
+	UE_LOG(LogHandTalk, Log, TEXT("live motion mode on %d parts"), Parts.Num());
+}
+
+void UHandTalkAvatarLink::HandleMotion(const TSharedPtr<FJsonObject>& Root)
+{
+	if (!bLiveMotion)
+	{
+		return;
+	}
+	const TArray<TSharedPtr<FJsonValue>>* BoneItems = nullptr;
+	const TArray<TSharedPtr<FJsonValue>>* FrameItems = nullptr;
+	if (!Root->TryGetArrayField(TEXT("bones"), BoneItems) || !Root->TryGetArrayField(TEXT("frames"), FrameItems))
+	{
+		return;
+	}
+	TSharedRef<FHandTalkLiveMotion> Motion = MakeShared<FHandTalkLiveMotion>();
+	for (const TSharedPtr<FJsonValue>& B : *BoneItems) Motion->Bones.Add(FName(*B->AsString()));
+	const int32 NB = Motion->Bones.Num();
+	Motion->Rotations.Reserve(FrameItems->Num() * NB);
+	for (const TSharedPtr<FJsonValue>& F : *FrameItems)
+	{
+		const TArray<TSharedPtr<FJsonValue>>& V = F->AsArray();
+		if (V.Num() != NB * 4) continue;
+		for (int32 i = 0; i < NB; ++i)
+		{
+			Motion->Rotations.Add(FQuat(V[i * 4]->AsNumber(), V[i * 4 + 1]->AsNumber(), V[i * 4 + 2]->AsNumber(), V[i * 4 + 3]->AsNumber()));
+		}
+		++Motion->NumFrames;
+	}
+	if (Motion->NumFrames == 0)
+	{
+		return;
+	}
+	double Fps = 30.0, Gap = 0.0;
+	Root->TryGetNumberField(TEXT("fps"), Fps);
+	Root->TryGetNumberField(TEXT("loop_gap"), Gap);
+	Root->TryGetBoolField(TEXT("loop"), Motion->bLoop);
+	Motion->Fps = static_cast<float>(Fps);
+	Motion->LoopGap = static_cast<float>(Gap);
+
+	EnterLiveMode();
+	if (UWorld* World = GetWorld())
+	{
+		LivePlayer->Play(Motion, World->GetTimeSeconds());
+	}
+	UE_LOG(LogHandTalk, Log, TEXT("motion %d frames %.2fs%s"), Motion->NumFrames, Motion->Duration(), Motion->bLoop ? TEXT(" loop") : TEXT(""));
 }
 
 void UHandTalkAvatarLink::PlayCommands(const TArray<FHandTalkAvatarCommand>& Commands)
@@ -322,7 +407,7 @@ void UHandTalkAvatarLink::PlayNext()
 
 void UHandTalkAvatarLink::Rest()
 {
-	if (RestClip.IsNone())
+	if (RestClip.IsNone() || bLiveActive)
 	{
 		return;
 	}

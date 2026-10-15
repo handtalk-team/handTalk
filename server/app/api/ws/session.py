@@ -486,6 +486,7 @@ async def avatar_endpoint(ws: WebSocket) -> None:
     await manager.accept(ws)
     manager.add_avatar(ws)
     try:
+        await manager.send_rest(ws)
         while True:
             await ws.receive_text()   # 연결 유지용, 내용은 무시
     except WebSocketDisconnect:

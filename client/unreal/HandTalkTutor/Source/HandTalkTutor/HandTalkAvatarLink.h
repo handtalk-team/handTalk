@@ -7,6 +7,7 @@
 #include "HandTalkAvatarLink.generated.h"
 
 class IWebSocket;
+struct FHandTalkLivePlayer;
 class UAnimSequenceBase;
 class USkeletalMeshComponent;
 
@@ -65,6 +66,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	FName RestClip = TEXT("KSL_hospital");
 
+	/**
+	 * 서버가 실시간으로 만든 동작({"type":"motion"})을 뼈대에 바로 입힌다 (HandTalkLiveAnimInstance).
+	 * 켜져 있으면 클립 재생은 서버가 동작을 못 보낼 때만 쓴다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
+	bool bLiveMotion = true;
+
 	/** 학습 단계의 목표 동작을 쉬는 동안 반복할 때의 쉬는 시간(초). 0 이면 반복 안 함 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	float DemoInterval = 1.8f;
@@ -106,6 +114,8 @@ private:
 	};
 
 	void SetupParts();
+	void HandleMotion(const TSharedPtr<class FJsonObject>& Root);
+	void EnterLiveMode();
 	void HandleMessage(const FString& Message);
 	void ScheduleReconnect();
 	void PlayNext();
@@ -123,4 +133,6 @@ private:
 	TArray<FHandTalkAvatarCommand> Queue;
 	TArray<FName> DemoClips;
 	TArray<FPart> Parts;
+	TSharedPtr<FHandTalkLivePlayer> LivePlayer;
+	bool bLiveActive = false;   // 서버 동작을 한 번이라도 받아 실시간 모드로 바뀌었는지
 };

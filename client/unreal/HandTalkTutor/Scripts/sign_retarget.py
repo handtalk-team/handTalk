@@ -175,8 +175,17 @@ class Retargeter:
 
     def solve_frame(self, joints: Dict[str, Sequence[float]]) -> Dict[str, Quat]:
         """키포인트(수어자 좌표) → 구동 본의 로컬 회전"""
-        world: Dict[str, Quat] = {}
+        world = self.solve_frame_world(joints)
         local: Dict[str, Quat] = {}
+        for bone, *_ in self.map:
+            parent = self.ref.parent.get(bone)
+            pw = self._world_of(parent, world) if parent else QI
+            local[bone] = q_norm(q_mul(q_inv(pw), world[bone]))
+        return local
+
+    def solve_frame_world(self, joints: Dict[str, Sequence[float]]) -> Dict[str, Quat]:
+        """키포인트(수어자 좌표) → 구동 본의 컴포넌트 공간 회전 (실시간 스트리밍용: 메시마다 로컬로 바꾼다)"""
+        world: Dict[str, Quat] = {}
         ref = self.ref
         for bone, anc, ka, kb, _child, twist in self.map:
             # 조상에서 물려받은 회전 (조상 변화량을 참조 회전에 적용)
@@ -206,13 +215,7 @@ class Retargeter:
 
             q = q_norm(q)
             world[bone] = q
-
-        # 로컬 회전: 부모의 새 월드 회전 기준
-        for bone, *_ in self.map:
-            parent = ref.parent.get(bone)
-            pw = self._world_of(parent, world) if parent else QI
-            local[bone] = q_norm(q_mul(q_inv(pw), world[bone]))
-        return local
+        return world
 
     def _world_of(self, bone: str, world: Dict[str, Quat]) -> Quat:
         """구동 안 되는 본의 새 월드 회전 = 가장 가까운 구동 조상의 변화량 × 참조 회전"""
