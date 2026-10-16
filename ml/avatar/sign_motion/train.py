@@ -67,6 +67,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--val-signers", default="", help="검증용으로 뺄 수어자 (예: REAL17,REAL18)")
     ap.add_argument("--export-only", action="store_true", help="--out 의 best.pt 를 ONNX 로만 내보냄")
     args = ap.parse_args()
     if args.export_only:
@@ -93,14 +94,23 @@ def main() -> None:
     samples = [s for s in samples if 8 <= len(s.motion) <= 300]
     vocab = build_vocab(samples)
     signers = {s: i for i, s in enumerate(sorted({x.signer for x in samples}))}
-    items = []
+    items, held = [], []
+    val_signers = {v for v in args.val_signers.split(",") if v}
     for s in samples:
         t, d = tokens_and_durations(s, vocab)
-        items.append((t, d, signers[s.signer], s.motion))
+        if s.signer in val_signers:   # 처음 보는 사람이라 수어자 임베딩은 시연용(REAL02)으로
+            held.append((t, d, signers.get("REAL02", 0), s.motion))
+        else:
+            items.append((t, d, signers[s.signer], s.motion))
     random.seed(0)
     random.shuffle(items)
-    n_val = max(len(items) // 50, 1)
-    val, train = items[:n_val], items[n_val:]
+    if held:
+        # 학습에 안 쓴 수어자로 검증 (처음 보는 사람의 동작을 얼마나 잘 맞히나). 너무 많으면 일부만.
+        random.shuffle(held)
+        val, train = held[:1000], items
+    else:
+        n_val = max(len(items) // 50, 1)
+        val, train = items[:n_val], items[n_val:]
     print(f"vocab {len(vocab)}  signers {len(signers)}  train {len(train)}  val {len(val)}")
 
     os.makedirs(args.out, exist_ok=True)

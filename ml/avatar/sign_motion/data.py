@@ -122,8 +122,16 @@ def tokens_and_durations(s: Sample, vocab: Dict[str, int]) -> tuple:
     toks.append(EOS)
     durs.append(T - cur)
     durs = [max(int(d), 0) for d in durs]
-    diff = T - sum(durs)
-    durs[-1] += diff
+    # 라벨 끝 시각이 영상보다 길면 넘친 만큼 뒤에서부터 줄인다 (합 = T)
+    over = sum(durs) - T
+    i = len(durs) - 1
+    while over > 0 and i >= 0:
+        cut = min(over, durs[i])
+        durs[i] -= cut
+        over -= cut
+        i -= 1
+    if over < 0:
+        durs[-1] -= over
     return np.asarray(toks, dtype=np.int64), np.asarray(durs, dtype=np.int64)
 
 
