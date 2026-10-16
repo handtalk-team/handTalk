@@ -124,6 +124,7 @@ def _side_map(s: str) -> List[tuple]:
 
 
 BONE_MAP: List[tuple] = _side_map("r") + _side_map("l")
+MAX_TWIST = math.radians(100)   # 손바닥 비틀림 한계 (회내·회외 합쳐 사람은 약 ±90°)
 DRIVEN_BONES: List[str] = [b[0] for b in BONE_MAP]
 
 
@@ -211,6 +212,8 @@ class Retargeter:
                     have_p = v_norm(v_sub(have, v_scale(target, v_dot(have, target))))
                     if want_p and have_p:
                         ang = math.atan2(v_dot(v_cross(have_p, want_p), target), v_dot(have_p, want_p))
+                        # 손 비틀림은 사람 팔뚝이 돌 수 있는 만큼만 (키포인트 잡음으로 손이 뒤집히는 것 방지)
+                        ang = max(-MAX_TWIST, min(MAX_TWIST, ang))
                         q = q_mul(q_axis_angle(target, ang), q)
 
             q = q_norm(q)

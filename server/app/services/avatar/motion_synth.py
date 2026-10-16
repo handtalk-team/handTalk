@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
+from app.services.avatar import hand_limits
+
 logger = logging.getLogger(__name__)
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -129,6 +131,7 @@ class MotionSynth:
         return self.to_message(self.rest_kp[None], loop=True) if self.rest_kp is not None else None
 
     def to_message(self, kp: np.ndarray, loop: bool = False, loop_gap: float = 0.0) -> dict:
+        kp = hand_limits.apply(kp, JOINTS)   # 사람 손이 못 하는 꺾임 제거
         frames: List[List[float]] = []
         prev: Dict[str, sr.Quat] = {}
         for row in kp:
