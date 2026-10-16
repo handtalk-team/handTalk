@@ -81,8 +81,11 @@ class ModelGenerator:
             if self.word_signer.get(g) in self.signers:
                 signer = np.array([self.signers[self.word_signer[g]]], dtype=np.int64)
         hidden, log_dur = self.enc.run(None, {"tokens": np.array([toks], dtype=np.int64), "signer": signer})
-        dur = np.maximum(np.round(np.expm1(log_dur[0]) / speed), 1).astype(int)
-        dur[0], dur[-1] = max(dur[0], 3), max(dur[-1], 3)
+        raw = np.maximum(np.round(np.expm1(log_dur[0]) / speed), 0).astype(int)
+        # 단어·연결 토큰은 최소 1프레임. 시작/끝(BOS/EOS)은 예측값 그대로 둔다: 모델은 양방향으로 보기 때문에
+        # 끝 길이를 억지로 늘리면 앞쪽 동작까지 작아진다 (단어 손 높이가 실제의 절반으로 줄던 원인).
+        dur = raw.copy()
+        dur[1:-1] = np.maximum(dur[1:-1], 1)
         idx = np.repeat(np.arange(len(toks)), dur)
         starts = np.cumsum(dur) - dur
         within = np.arange(len(idx)) - starts[idx]
