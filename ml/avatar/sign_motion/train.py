@@ -67,6 +67,9 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--max-sentences", type=int, default=0, help="문장 샘플 수 제한 (이어서 학습할 때 빠르게)")
+    ap.add_argument("--word-repeat", type=int, default=1, help="단어 샘플을 몇 번 넣을지")
+    ap.add_argument("--init", default=None, help="이 폴더의 best.pt 에서 이어서 학습 (단어 목록 그대로)")
     ap.add_argument("--val-signers", default="", help="검증용으로 뺄 수어자 (예: REAL17,REAL18)")
     ap.add_argument("--export-only", action="store_true", help="--out 의 best.pt 를 ONNX 로만 내보냄")
     args = ap.parse_args()
@@ -85,15 +88,26 @@ def main() -> None:
     samples = []
     if args.sentences:
         sen = load_sentences(args.sentences)
+        if args.max_sentences and len(sen) > args.max_sentences:
+            random.Random(0).shuffle(sen)
+            sen = sen[:args.max_sentences]
         print(f"sentences {len(sen)}")
         samples += sen
     if args.words:
         wd = load_words(args.words, lex)
         print(f"words {len(wd)}")
-        samples += wd
+        # 단어는 단어마다 영상이 하나뿐이라 문장(수만 개)에 묻힌다. 여러 번 넣어 단어 동작을 정확히 배우게 한다.
+        samples += wd * max(args.word_repeat, 1)
     samples = [s for s in samples if 8 <= len(s.motion) <= 300]
-    vocab = build_vocab(samples)
-    signers = {s: i for i, s in enumerate(sorted({x.signer for x in samples}))}
+    if args.init:
+        # 이어서 학습: 단어 id·수어자 id 를 기존 모델과 똑같이 쓴다
+        with open(os.path.join(args.init, "meta.json"), encoding="utf-8") as f:
+            init_meta = json.load(f)
+        vocab, signers = init_meta["vocab"], init_meta["signers"]
+        samples = [s for s in samples if s.signer in signers and all(g in vocab for g in s.glosses)]
+    else:
+        vocab = build_vocab(samples)
+        signers = {s: i for i, s in enumerate(sorted({x.signer for x in samples}))}
     items, held = [], []
     val_signers = {v for v in args.val_signers.split(",") if v}
     for s in samples:
@@ -114,7 +128,10 @@ def main() -> None:
     print(f"vocab {len(vocab)}  signers {len(signers)}  train {len(train)}  val {len(val)}")
 
     os.makedirs(args.out, exist_ok=True)
-    meta = {"vocab": vocab, "signers": signers, "fps": FPS, "joints": JOINTS, "special": SPECIAL}
+    # 단어 하나만 할 때는 그 단어를 보여 준 수어자 스타일로 만드는 게 가장 정확하다 (단어 영상은 단어마다 한 명)
+    word_signer = {s.glosses[0]: s.signer for s in samples if len(s.glosses) == 1 and s.signer in signers}
+    meta = {"vocab": vocab, "signers": signers, "fps": FPS, "joints": JOINTS, "special": SPECIAL,
+            "word_signer": word_signer}
     with open(os.path.join(args.out, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
 
@@ -123,6 +140,8 @@ def main() -> None:
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.epochs * (len(train) // args.batch + 1))
     start = 0
+    if args.init:
+        model.load_state_dict(torch.load(os.path.join(args.init, "best.pt"), map_location=dev)["model"])
     ckpt = os.path.join(args.out, "last.pt")
     if args.resume and os.path.exists(ckpt):
         st = torch.load(ckpt, map_location=dev)
@@ -162,7 +181,7 @@ def main() -> None:
         v = float(np.mean(vp))
         print(f"epoch {ep} train {tot / max(n, 1):.4f} val_pos {v:.4f} ({time.time() - t0:.0f}s)", flush=True)
         torch.save({"model": model.state_dict(), "epoch": ep}, ckpt)
-        if v < best:
+        if v < best or args.init:   # 이어서 학습할 땐 단어 정확도를 올리는 게 목적이라 마지막 상태를 쓴다
             best = v
             torch.save({"model": model.state_dict(), "epoch": ep}, os.path.join(args.out, "best.pt"))
     model.load_state_dict(torch.load(os.path.join(args.out, "best.pt"), map_location=dev)["model"])

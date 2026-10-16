@@ -54,7 +54,9 @@ class ModelGenerator:
         self.vocab: Dict[str, int] = meta["vocab"]
         self.fps = float(meta["fps"])
         self.joints: List[str] = meta["joints"]
-        self.signer = np.array([meta["signers"].get(self.SIGNER, 0)], dtype=np.int64)
+        self.signers: Dict[str, int] = meta["signers"]
+        self.word_signer: Dict[str, str] = meta.get("word_signer", {})
+        self.signer = np.array([self.signers.get(self.SIGNER, 0)], dtype=np.int64)
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 4
         self.enc = ort.InferenceSession(os.path.join(folder, "encoder.onnx"), opts, providers=["CPUExecutionProvider"])
@@ -71,7 +73,12 @@ class ModelGenerator:
         for i, g in enumerate(ids):
             toks += ([2] if i else []) + [g]
         toks.append(3)
-        hidden, log_dur = self.enc.run(None, {"tokens": np.array([toks], dtype=np.int64), "signer": self.signer})
+        signer = self.signer
+        if len(ids) == 1:   # 단어 하나(단어 연습)는 그 단어를 배운 수어자 스타일로
+            g = next(g for g in glosses if g in self.vocab)
+            if self.word_signer.get(g) in self.signers:
+                signer = np.array([self.signers[self.word_signer[g]]], dtype=np.int64)
+        hidden, log_dur = self.enc.run(None, {"tokens": np.array([toks], dtype=np.int64), "signer": signer})
         dur = np.maximum(np.round(np.expm1(log_dur[0]) / speed), 1).astype(int)
         dur[0], dur[-1] = max(dur[0], 3), max(dur[-1], 3)
         idx = np.repeat(np.arange(len(toks)), dur)
@@ -79,7 +86,7 @@ class ModelGenerator:
         within = np.arange(len(idx)) - starts[idx]
         L = dur[idx].astype(np.float32)
         phase = np.stack([(within + 0.5) / L, L / 30.0], -1)[None].astype(np.float32)
-        out = self.dec.run(None, {"frames": hidden[:, idx], "phase": phase, "signer": self.signer})[0][0]
+        out = self.dec.run(None, {"frames": hidden[:, idx], "phase": phase, "signer": signer})[0][0]
         kp = np.zeros((len(out), len(JOINTS), 3), dtype=np.float32)
         for j, n in enumerate(self.joints):
             kp[:, JOINTS.index(n)] = out[:, j]
