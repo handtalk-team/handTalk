@@ -169,15 +169,13 @@ SIGN_MODEL_META = os.path.join(os.environ.get("HANDTALK_SIGN_MODEL", r"C:\handta
 
 @lru_cache(maxsize=1)
 def sign_vocab() -> frozenset:
-    """선생님이 수어로 할 수 있는 단어: 단어 사전 + 동작 생성 모델이 배운 단어 (AI Hub 문장 단어 포함)"""
-    words = set(lexicon())
+    """선생님이 수어로 할 수 있는 단어 = 동작 생성 모델이 배운 단어 (AI Hub 단어 + 문장 단어)"""
     try:
         import json
         with open(SIGN_MODEL_META, encoding="utf-8") as f:
-            words |= set(json.load(f)["vocab"])
+            return frozenset(json.load(f)["vocab"])
     except (OSError, ValueError, KeyError):
-        pass
-    return frozenset(words)
+        return frozenset(lexicon())   # 모델이 아직 없을 때 (단어 목록만)
 
 
 def can_sign(gloss: str) -> bool:

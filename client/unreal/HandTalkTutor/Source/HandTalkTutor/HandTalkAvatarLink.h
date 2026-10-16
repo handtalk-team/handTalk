@@ -1,4 +1,5 @@
-// handTalk — 서버 /ws/avatar 에 붙어 튜터 응답(avatar_commands)과 학습 단계(lesson)를 받아 수어 클립을 실시간 재생한다.
+// handTalk — 서버 /ws/avatar 에 붙어, 서버가 실시간으로 만든 수어 동작({"type":"motion"})을 메타휴먼 뼈대에 바로 입힌다.
+// 애니메이션 클립은 쓰지 않는다. 동작은 서버의 동작 생성 모델이 문장마다 새로 만든다.
 
 #pragma once
 
@@ -7,27 +8,12 @@
 #include "HandTalkAvatarLink.generated.h"
 
 class IWebSocket;
-struct FHandTalkLivePlayer;
-class UAnimSequenceBase;
 class USkeletalMeshComponent;
+struct FHandTalkLivePlayer;
 
-/** 서버 AvatarCommand (server/app/models/schemas/ws_messages.py) 와 같은 필드 */
-USTRUCT(BlueprintType)
-struct FHandTalkAvatarCommand
-{
-	GENERATED_BODY()
-
-	/** 글로스 클립 이름. lexicon 의 clip 과 같고, Content 의 AnimSequence 이름과도 같다. */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere) FName Clip;
-	UPROPERTY(BlueprintReadWrite, EditAnywhere) float BlendIn = 0.1f;
-	UPROPERTY(BlueprintReadWrite, EditAnywhere) float BlendOut = 0.1f;
-	UPROPERTY(BlueprintReadWrite, EditAnywhere) float Speed = 1.0f;
-	UPROPERTY(BlueprintReadWrite, EditAnywhere) FString Expression;
-};
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTutorReply, const FString&, Text, const TArray<FHandTalkAvatarCommand>&, Commands);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTutorReply, const FString&, Text, const TArray<FString>&, Gloss);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRecognition, const FString&, Text, float, Confidence);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnClipStarted, FName, Clip);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMotionStarted, float, Duration);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLinkStateChanged, bool, bConnected);
 
 UCLASS(ClassGroup = (HandTalk), meta = (BlueprintSpawnableComponent))
@@ -46,36 +32,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	float ReconnectInterval = 3.0f;
 
-	/** 클립을 재생할 메타휴먼 액터. 비우면 이 컴포넌트의 Owner. */
+	/** 움직일 메타휴먼 액터. 비우면 이 컴포넌트의 Owner. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
 	TObjectPtr<AActor> TargetActor;
 
-	/**
-	 * 부위(스켈레탈 메시 컴포넌트 이름) → 클립 폴더. 옷 메시가 스켈레톤이 다른 메타휴먼(Vivian)은
-	 * 부위마다 같은 이름의 클립을 따로 만든다 (Scripts/build_vivian_signs.py).
-	 * 비어 있으면 Body 하나에 ClipFolder 를 쓴다.
-	 */
+	/** 동작을 입힐 스켈레탈 메시 컴포넌트 이름 (몸과 옷). 각 메시가 자기 참조 포즈 기준으로 같은 동작을 받는다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	TMap<FName, FString> PartClipFolders;
+	TArray<FName> PartNames = { TEXT("Body"), TEXT("Torso"), TEXT("Legs"), TEXT("Feet") };
 
-	/** PartClipFolders 가 비었을 때 Body 에 쓰는 폴더. Clip 이 KSL_hello 면 {ClipFolder}/KSL_hello */
+	/** 동작이 바뀔 때 섞는 시간(초) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	FString ClipFolder = TEXT("/Game/HandTalk/Signs");
-
-	/** 쉬는 자세: 이 클립의 마지막 프레임을 잡고 있는다 (없으면 마지막 재생 자세 유지) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	FName RestClip = TEXT("KSL_hospital");
-
-	/**
-	 * 서버가 실시간으로 만든 동작({"type":"motion"})을 뼈대에 바로 입힌다 (HandTalkLiveAnimInstance).
-	 * 켜져 있으면 클립 재생은 서버가 동작을 못 보낼 때만 쓴다.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	bool bLiveMotion = true;
-
-	/** 학습 단계의 목표 동작을 쉬는 동안 반복할 때의 쉬는 시간(초). 0 이면 반복 안 함 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
-	float DemoInterval = 1.8f;
+	float BlendTime = 0.25f;
 
 	/** Play 시작 시 화면을 이 카메라로 (Pixel Streaming 으로 보낼 시점) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandTalk")
@@ -83,56 +50,26 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnTutorReply OnTutorReply;
 	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnRecognition OnRecognition;
-	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnClipStarted OnClipStarted;
+	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnMotionStarted OnMotionStarted;
 	UPROPERTY(BlueprintAssignable, Category = "HandTalk") FOnLinkStateChanged OnLinkStateChanged;
 
 	UFUNCTION(BlueprintCallable, Category = "HandTalk") void Connect();
 	UFUNCTION(BlueprintCallable, Category = "HandTalk") void Disconnect();
 	UFUNCTION(BlueprintPure, Category = "HandTalk") bool IsConnected() const;
 
-	/** 서버 없이 테스트할 때: 명령 목록을 바로 재생 큐에 넣는다. */
-	UFUNCTION(BlueprintCallable, Category = "HandTalk")
-	void PlayCommands(const TArray<FHandTalkAvatarCommand>& Commands);
-
-	/** 서버 없이 테스트할 때: 클립 이름 하나를 바로 재생한다. */
-	UFUNCTION(BlueprintCallable, Category = "HandTalk")
-	void PlayClipByName(FName Clip);
-
-	/** 쉬는 동안 반복할 시범 클립 */
-	UFUNCTION(BlueprintCallable, Category = "HandTalk")
-	void SetDemoClips(const TArray<FName>& Clips);
-
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-	struct FPart
-	{
-		TWeakObjectPtr<USkeletalMeshComponent> Mesh;
-		FString Folder;
-	};
-
 	void SetupParts();
-	void HandleMotion(const TSharedPtr<class FJsonObject>& Root);
-	void EnterLiveMode();
 	void HandleMessage(const FString& Message);
+	void HandleMotion(const TSharedPtr<class FJsonObject>& Root);
 	void ScheduleReconnect();
-	void PlayNext();
-	void Rest();
-	void DemoTick();
-	bool PlayOnParts(FName Clip, float Speed, float& OutLength);
-	UAnimSequenceBase* ResolveClip(const FString& Folder, FName Clip) const;
 
 	TSharedPtr<IWebSocket> Socket;
 	bool bWantConnected = false;
-	bool bPlaying = false;
 	FTimerHandle ReconnectTimer;
-	FTimerHandle ClipTimer;
-	FTimerHandle DemoTimer;
-	TArray<FHandTalkAvatarCommand> Queue;
-	TArray<FName> DemoClips;
-	TArray<FPart> Parts;
+	TArray<TWeakObjectPtr<USkeletalMeshComponent>> Parts;
 	TSharedPtr<FHandTalkLivePlayer> LivePlayer;
-	bool bLiveActive = false;   // 서버 동작을 한 번이라도 받아 실시간 모드로 바뀌었는지
 };

@@ -1,9 +1,8 @@
-// handTalk — 서버 /ws/avatar 에 붙어 튜터 응답(avatar_commands)과 학습 단계(lesson)를 받아 수어 클립을 실시간 재생한다.
+// handTalk — 서버 /ws/avatar 에 붙어, 서버가 실시간으로 만든 수어 동작을 메타휴먼 뼈대에 바로 입힌다.
 
 #include "HandTalkAvatarLink.h"
 #include "HandTalkLiveAnimInstance.h"
 
-#include "Animation/AnimSequenceBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/World.h"
@@ -37,7 +36,6 @@ void UHandTalkAvatarLink::BeginPlay()
 	}
 
 	Connect();
-	Rest();
 }
 
 void UHandTalkAvatarLink::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -49,36 +47,36 @@ void UHandTalkAvatarLink::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void UHandTalkAvatarLink::SetupParts()
 {
 	Parts.Reset();
+	LivePlayer = MakeShared<FHandTalkLivePlayer>();
+	LivePlayer->BlendTime = BlendTime;
+
 	AActor* Target = TargetActor ? TargetActor.Get() : GetOwner();
 	if (!Target)
 	{
 		return;
 	}
-
 	TArray<USkeletalMeshComponent*> Meshes;
 	Target->GetComponents(Meshes);
 	for (USkeletalMeshComponent* Mesh : Meshes)
 	{
-		const FName Name = Mesh->GetFName();
-		const FString* Folder = PartClipFolders.Find(Name);
-		if (!Folder && PartClipFolders.Num() == 0 && Name == TEXT("Body"))
-		{
-			Folder = &ClipFolder;
-		}
-		if (!Folder)
+		if (!PartNames.Contains(Mesh->GetFName()))
 		{
 			continue;
 		}
-		// 리타깃/후처리 AnimBP 대신 클립을 그대로 재생 (옷 메시는 각자 클립을 받으므로 Leader Pose 해제)
+		// 리타깃/후처리 AnimBP 대신 받은 동작을 직접 입힌다 (옷 메시도 각자 같은 동작을 받으므로 Leader Pose 해제)
 		Mesh->SetLeaderPoseComponent(nullptr);
-		Mesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-		if (Name == TEXT("Body"))
+		if (Mesh->GetFName() == TEXT("Body"))
 		{
 			Mesh->SetDisablePostProcessBlueprint(true);
 		}
-		Parts.Add({ Mesh, *Folder });
+		Mesh->SetAnimInstanceClass(UHandTalkLiveAnimInstance::StaticClass());
+		if (UHandTalkLiveAnimInstance* Inst = Cast<UHandTalkLiveAnimInstance>(Mesh->GetAnimInstance()))
+		{
+			Inst->Player = LivePlayer;
+		}
+		Parts.Add(Mesh);
 	}
-	UE_LOG(LogHandTalk, Log, TEXT("avatar parts: %d on %s"), Parts.Num(), *Target->GetName());
+	UE_LOG(LogHandTalk, Log, TEXT("live motion parts: %d on %s"), Parts.Num(), *Target->GetName());
 }
 
 void UHandTalkAvatarLink::Connect()
@@ -125,8 +123,6 @@ void UHandTalkAvatarLink::Disconnect()
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ReconnectTimer);
-		World->GetTimerManager().ClearTimer(ClipTimer);
-		World->GetTimerManager().ClearTimer(DemoTimer);
 	}
 	if (Socket.IsValid())
 	{
@@ -173,48 +169,10 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 	}
 	else if (Type == TEXT("llm_response"))
 	{
-		TArray<FHandTalkAvatarCommand> Commands;
-		const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
-		if (Root->TryGetArrayField(TEXT("avatar_commands"), Items))
-		{
-			for (const TSharedPtr<FJsonValue>& Item : *Items)
-			{
-				const TSharedPtr<FJsonObject> Obj = Item->AsObject();
-				if (!Obj.IsValid()) continue;
-				FHandTalkAvatarCommand Cmd;
-				Cmd.Clip = FName(*Obj->GetStringField(TEXT("clip")));
-				Obj->TryGetNumberField(TEXT("blend_in"), Cmd.BlendIn);
-				Obj->TryGetNumberField(TEXT("blend_out"), Cmd.BlendOut);
-				Obj->TryGetNumberField(TEXT("speed"), Cmd.Speed);
-				Obj->TryGetStringField(TEXT("expression"), Cmd.Expression);
-				Commands.Add(Cmd);
-			}
-		}
-		OnTutorReply.Broadcast(Root->GetStringField(TEXT("text")), Commands);
-		if (!bLiveActive)
-		{
-			PlayCommands(Commands);   // 실시간 동작이 오면 그걸로 움직인다
-		}
-	}
-	else if (Type == TEXT("lesson"))
-	{
-		// 연습 중인 목표 동작 → 쉬는 동안 반복 (프리토킹·완료 시에는 비움)
-		TArray<FName> Clips;
-		bool bDone = false;
-		Root->TryGetBoolField(TEXT("done"), bDone);
-		const TSharedPtr<FJsonObject>* Target = nullptr;
-		if (!bDone && Root->TryGetObjectField(TEXT("target"), Target) && Target)
-		{
-			const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
-			if ((*Target)->TryGetArrayField(TEXT("clips"), Items))
-			{
-				for (const TSharedPtr<FJsonValue>& V : *Items) Clips.Add(FName(*V->AsString()));
-			}
-		}
-		if (!bLiveActive)
-		{
-			SetDemoClips(Clips);
-		}
+		// 동작은 서버가 같은 답으로 만든 motion 메시지로 따로 온다. 여기서는 알림만.
+		TArray<FString> Gloss;
+		Root->TryGetStringArrayField(TEXT("gloss"), Gloss);
+		OnTutorReply.Broadcast(Root->GetStringField(TEXT("text")), Gloss);
 	}
 	else if (Type == TEXT("recognition"))
 	{
@@ -224,44 +182,11 @@ void UHandTalkAvatarLink::HandleMessage(const FString& Message)
 	}
 }
 
-void UHandTalkAvatarLink::EnterLiveMode()
-{
-	if (bLiveActive)
-	{
-		return;
-	}
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ClipTimer);
-		World->GetTimerManager().ClearTimer(DemoTimer);
-	}
-	Queue.Reset();
-	DemoClips.Reset();
-	bPlaying = false;
-	LivePlayer = MakeShared<FHandTalkLivePlayer>();
-	for (const FPart& Part : Parts)
-	{
-		USkeletalMeshComponent* Mesh = Part.Mesh.Get();
-		if (!Mesh) continue;
-		Mesh->SetAnimInstanceClass(UHandTalkLiveAnimInstance::StaticClass());
-		if (UHandTalkLiveAnimInstance* Inst = Cast<UHandTalkLiveAnimInstance>(Mesh->GetAnimInstance()))
-		{
-			Inst->Player = LivePlayer;
-		}
-	}
-	bLiveActive = true;
-	UE_LOG(LogHandTalk, Log, TEXT("live motion mode on %d parts"), Parts.Num());
-}
-
 void UHandTalkAvatarLink::HandleMotion(const TSharedPtr<FJsonObject>& Root)
 {
-	if (!bLiveMotion)
-	{
-		return;
-	}
 	const TArray<TSharedPtr<FJsonValue>>* BoneItems = nullptr;
 	const TArray<TSharedPtr<FJsonValue>>* FrameItems = nullptr;
-	if (!Root->TryGetArrayField(TEXT("bones"), BoneItems) || !Root->TryGetArrayField(TEXT("frames"), FrameItems))
+	if (!LivePlayer.IsValid() || !Root->TryGetArrayField(TEXT("bones"), BoneItems) || !Root->TryGetArrayField(TEXT("frames"), FrameItems))
 	{
 		return;
 	}
@@ -290,134 +215,13 @@ void UHandTalkAvatarLink::HandleMotion(const TSharedPtr<FJsonObject>& Root)
 	Motion->Fps = static_cast<float>(Fps);
 	Motion->LoopGap = static_cast<float>(Gap);
 
-	EnterLiveMode();
 	if (UWorld* World = GetWorld())
 	{
 		LivePlayer->Play(Motion, World->GetTimeSeconds());
 	}
 	UE_LOG(LogHandTalk, Log, TEXT("motion %d frames %.2fs%s"), Motion->NumFrames, Motion->Duration(), Motion->bLoop ? TEXT(" loop") : TEXT(""));
-}
-
-void UHandTalkAvatarLink::PlayCommands(const TArray<FHandTalkAvatarCommand>& Commands)
-{
-	// 새 응답이 오면 이전 응답의 남은 클립은 버린다.
-	Queue = Commands;
-	if (UWorld* World = GetWorld())
+	if (!Motion->bLoop)
 	{
-		World->GetTimerManager().ClearTimer(ClipTimer);
-		World->GetTimerManager().ClearTimer(DemoTimer);
-	}
-	PlayNext();
-}
-
-void UHandTalkAvatarLink::PlayClipByName(FName Clip)
-{
-	FHandTalkAvatarCommand Cmd;
-	Cmd.Clip = Clip;
-	PlayCommands({ Cmd });
-}
-
-void UHandTalkAvatarLink::SetDemoClips(const TArray<FName>& Clips)
-{
-	DemoClips = Clips;
-	UWorld* World = GetWorld();
-	if (World && !bPlaying)
-	{
-		World->GetTimerManager().SetTimer(DemoTimer, this, &UHandTalkAvatarLink::DemoTick, 0.6f, false);
-	}
-}
-
-void UHandTalkAvatarLink::DemoTick()
-{
-	if (bPlaying || DemoClips.Num() == 0 || DemoInterval <= 0.f)
-	{
-		return;
-	}
-	Queue.Reset();
-	for (const FName& C : DemoClips)
-	{
-		FHandTalkAvatarCommand Cmd;
-		Cmd.Clip = C;
-		Queue.Add(Cmd);
-	}
-	PlayNext();
-}
-
-UAnimSequenceBase* UHandTalkAvatarLink::ResolveClip(const FString& Folder, FName Clip) const
-{
-	if (Clip.IsNone())
-	{
-		return nullptr;
-	}
-	const FString Name = Clip.ToString();
-	const FString Path = FString::Printf(TEXT("%s/%s.%s"), *Folder, *Name, *Name);
-	return LoadObject<UAnimSequenceBase>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
-}
-
-bool UHandTalkAvatarLink::PlayOnParts(FName Clip, float Speed, float& OutLength)
-{
-	OutLength = 0.f;
-	bool bAny = false;
-	for (const FPart& Part : Parts)
-	{
-		USkeletalMeshComponent* Mesh = Part.Mesh.Get();
-		UAnimSequenceBase* Anim = Mesh ? ResolveClip(Part.Folder, Clip) : nullptr;
-		if (!Anim) continue;
-		Mesh->PlayAnimation(Anim, false);
-		Mesh->SetPlayRate(Speed);
-		OutLength = FMath::Max(OutLength, Anim->GetPlayLength());
-		bAny = true;
-	}
-	return bAny;
-}
-
-void UHandTalkAvatarLink::PlayNext()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	while (Queue.Num() > 0)
-	{
-		const FHandTalkAvatarCommand Cmd = Queue[0];
-		Queue.RemoveAt(0);
-
-		const float Speed = Cmd.Speed > KINDA_SMALL_NUMBER ? Cmd.Speed : 1.0f;
-		float Length = 0.f;
-		if (!PlayOnParts(Cmd.Clip, Speed, Length))
-		{
-			continue;   // 이 클립은 아직 없음
-		}
-		bPlaying = true;
-		UE_LOG(LogHandTalk, Log, TEXT("play %s (%.2fs)"), *Cmd.Clip.ToString(), Length / Speed);
-		OnClipStarted.Broadcast(Cmd.Clip);
-		World->GetTimerManager().SetTimer(ClipTimer, this, &UHandTalkAvatarLink::PlayNext, FMath::Max(Length / Speed, 0.05f), false);
-		return;
-	}
-
-	bPlaying = false;
-	Rest();
-	if (DemoClips.Num() > 0 && DemoInterval > 0.f)
-	{
-		World->GetTimerManager().SetTimer(DemoTimer, this, &UHandTalkAvatarLink::DemoTick, DemoInterval, false);
-	}
-}
-
-void UHandTalkAvatarLink::Rest()
-{
-	if (RestClip.IsNone() || bLiveActive)
-	{
-		return;
-	}
-	for (const FPart& Part : Parts)
-	{
-		USkeletalMeshComponent* Mesh = Part.Mesh.Get();
-		UAnimSequenceBase* Anim = Mesh ? ResolveClip(Part.Folder, RestClip) : nullptr;
-		if (!Anim) continue;
-		Mesh->PlayAnimation(Anim, false);
-		Mesh->SetPosition(Anim->GetPlayLength(), false);
-		Mesh->SetPlayRate(0.f);
+		OnMotionStarted.Broadcast(Motion->Duration());
 	}
 }

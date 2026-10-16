@@ -28,6 +28,7 @@ from app.models.schemas.ws_messages import (
 )
 from app.services.avatar.controller import AvatarController
 from app.services.tutor import curriculum as cur
+from app.services.tutor import ksl_grammar as ksl
 from app.services.tutor.llm import LLMClient, is_korean_only
 
 logger = logging.getLogger(__name__)
@@ -228,13 +229,16 @@ class SentenceTutor(BaseTutor):
 
 FREE_TALK_SYSTEM = """당신은 청각장애인과 한국 수어로 대화하는 친절한 AI 튜터입니다.
 사용자의 말은 수어 인식 결과(글로스 단어 나열)로 들어옵니다. 의도를 자연스럽게 해석해 대답하세요.
+당신의 답은 화면에 한국어로 보이고, 동시에 아바타가 gloss 를 한국수어 문장으로 수어합니다.
 
-규칙:
-1. 반드시 한국어로, 1~2문장의 짧고 쉬운 말로 답합니다.
-2. 대화를 이어 가도록 가끔 쉬운 질문을 합니다.
+출력 규칙:
+1. 한국어 답(reply)은 1~2문장의 짧고 쉬운 말. 대화를 이어 가도록 가끔 쉬운 질문을 합니다.
+2. gloss 는 reply 의 뜻 전체를 아래 [한국수어 문장 규칙]에 맞춘 완전한 수어 문장으로, 2~8개 단어.
+   단어는 반드시 다음 목록에 있는 것만 씁니다 (목록에 없으면 비슷한 뜻의 목록 단어로 바꿉니다): {vocab}
 3. 아래 JSON 한 줄로만 답합니다. 다른 글은 쓰지 않습니다.
-   {"reply": "자연스러운 한국어 답", "gloss": ["수어로 표현할 핵심 단어", "..."]}
-4. gloss 는 답의 핵심을 수어 어순으로 5개 이하, 반드시 다음 단어 목록에 있는 단어만 씁니다: {vocab}"""
+   {"reply": "자연스러운 한국어 답", "gloss": ["수어", "단어", "순서"]}
+
+{grammar}"""
 
 PAUSE_TO_SEND_S = 2.5   # 마지막 인식 후 이만큼 조용하면 말이 끝난 것으로 본다
 
@@ -310,14 +314,15 @@ class FreeTalkTutor(BaseTutor):
     async def _ask_llm(self):
         # 선생님이 수어로 할 수 있는 단어 전체 (3000단어 사전이 있으면 그 전체)
         vocab = ", ".join(sorted(cur.sign_vocab()))
-        raw = await self.llm.complete(FREE_TALK_SYSTEM.replace("{vocab}", vocab), self.history,
-                                      max_tokens=200)
+        recent = [w for m in self.history[-4:] for w in m["content"].split()]
+        system = FREE_TALK_SYSTEM.replace("{vocab}", vocab).replace("{grammar}", ksl.prompt_block(recent))
+        raw = await self.llm.complete(system, self.history, max_tokens=300)
         if raw:
             m = re.search(r"\{.*\}", raw, re.S)
             try:
                 data = json.loads(m.group(0)) if m else {}
                 reply = str(data.get("reply", "")).strip()
-                gloss = [str(g) for g in data.get("gloss", []) if cur.can_sign(str(g))][:5]
+                gloss = [str(g) for g in data.get("gloss", []) if cur.can_sign(str(g))][:8]
                 if reply and is_korean_only(reply):
                     return reply, gloss
             except (ValueError, AttributeError):

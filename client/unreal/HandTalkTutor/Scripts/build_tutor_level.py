@@ -65,7 +65,7 @@ driver.set_actor_label("AvatarDriver")
 link = driver.get_editor_property("link")
 link.set_editor_property("target_actor", tutor)
 link.set_editor_property("view_camera", cam)
-link.set_editor_property("part_clip_folders", PARTS)
+link.set_editor_property("part_names", list(PARTS.keys()))   # 서버 실시간 동작을 입힐 부위
 
 les.save_current_level()
 unreal.log("[handtalk] TutorLive level saved")
