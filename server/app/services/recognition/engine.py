@@ -88,6 +88,7 @@ class HybridRecognitionEngine:
 
     async def process_frame(self, frame) -> Optional[RecognitionResult]:
         fused = self._fusion.push_frame(frame)
+        self.last_fused = fused   # 문장 인식기가 같은 프레임 피처를 쓴다
         return await self._run_state_machine(fused)
 
     def reset_session(self) -> None:

@@ -2,3 +2,4 @@ data/**/*.npy
 models/*.onnx
 models/*.pt
 models/labels.txt
+models/glosses.json

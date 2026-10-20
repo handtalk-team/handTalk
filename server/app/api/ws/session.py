@@ -45,6 +45,7 @@ from app.models.schemas.ws_messages import (
     EndSession,
     FrameMessage,
     GloveStatus,
+    ModalityWeights,
     RecognitionResult,
     SessionSummary,
     StartSession,
@@ -54,6 +55,7 @@ from app.services.feedback.engine import FeedbackEngine
 from app.services.tutor.llm import LLMClient
 from app.services.tutor.tutors import BaseTutor, make_tutor
 from app.services.recognition.engine import HybridRecognitionEngine
+from app.services.recognition.sentence import SentenceRecognizer
 from app.services.recognition.glove import (
     AutoGloveHub,
     AutoGloveSensor,
@@ -104,6 +106,7 @@ class SessionHandler:
         self._user_id: Optional[str] = None
 
         self._engine = HybridRecognitionEngine()
+        self._sentence = SentenceRecognizer()
         self._feedback = FeedbackEngine()
         self._mode: str = "word"
         self._llm: Optional[LLMClient] = None
@@ -282,10 +285,23 @@ class SessionHandler:
             sensor_frame
         )
 
+        # ── 문장 인식 (프리토킹·상황 문장): 손을 내리거나 멈추면 한 문장을 통째로 읽는다 ──
+        sentence_only = False
+        if self._sentence.available and self._tutor and self._mode in ("free_talk", "sentence"):
+            sentence_only = self._tutor.wants_sentence_only(self._sentence.vocab)
+            ff = getattr(self._engine, "last_fused", None)
+            if ff is not None:
+                gloss = self._sentence.push(ff.fused_features, bool(np.abs(ff.vision_features).sum() > 0))
+                if gloss:
+                    await self._send(RecognitionResult(text=" ".join(gloss), confidence=1.0,
+                                                       modality_weights=ModalityWeights(vision=1.0, glove=0.0)))
+                    for out in await self._tutor.on_sentence(gloss):
+                        await self._send(out)
+
         if result and not self._recording:
             await self._send(result)
 
-            if not result.is_partial:
+            if not result.is_partial and not sentence_only:
                 # ── DB 저장 ───────────────────────────────────────────
                 asyncio.create_task(self._db_save_attempt(result))
 

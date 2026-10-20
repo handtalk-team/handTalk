@@ -74,6 +74,14 @@ class BaseTutor:
     async def opening(self) -> list:
         return []
 
+    async def on_sentence(self, gloss: List[str]) -> list:
+        """문장 인식 모델이 수어 한 문장을 글로스 순서로 읽었을 때 (프리토킹·상황 문장)"""
+        return []
+
+    def wants_sentence_only(self, vocab: set) -> bool:
+        """True 면 단어 인식 결과는 튜터에 넘기지 않는다 (문장 모델이 목표를 다 알 때)"""
+        return False
+
     async def on_sign(self, result: RecognitionResult) -> list:
         return []
 
@@ -189,6 +197,30 @@ class SentenceTutor(BaseTutor):
         t = self.cur_turn
         return [self._state(), _reply(t["partner"], "prompt")]
 
+    def wants_sentence_only(self, vocab: set) -> bool:
+        return all(g in vocab for g in self.cur_turn["gloss"])
+
+    async def on_sentence(self, gloss: List[str]) -> list:
+        t = self.cur_turn
+        target = t["gloss"]
+        if not gloss:
+            return []
+        self.attempts += 1
+        # 목표 순서가 인식된 문장 안에 그대로 들어 있으면 성공 (앞뒤에 덧붙인 말은 허용)
+        n = len(target)
+        hit = any(gloss[i:i + n] == target for i in range(len(gloss) - n + 1))
+        if not hit:
+            self.matched = 0
+            return [self._state(), _reply(
+                f"'{' '.join(gloss)}'로 보였어요. '{t['text']}'는 {' → '.join(target)} 순서로 해 보세요.", "feedback", target)]
+        self.correct += 1
+        self.matched = 0
+        if self.turn + 1 >= len(self.sc["turns"]):
+            return [self._state(done=True),
+                    _reply(f"{random.choice(PRAISE)} '{self.sc['title']}' 상황을 모두 마쳤어요.", "correct", ["감사"])]
+        self.turn += 1
+        return [self._state(), _reply(f"{random.choice(PRAISE)} {self.cur_turn['partner']}", "correct")]
+
     async def on_sign(self, result: RecognitionResult) -> list:
         self.attempts += 1
         t = self.cur_turn
@@ -270,6 +302,14 @@ class FreeTalkTutor(BaseTutor):
             self.buffer.append(result.text)
         self.last_sign_t = time.monotonic()
         return [Utterance(gloss=list(self.buffer))]
+
+    async def on_sentence(self, gloss: List[str]) -> list:
+        # 문장 모델이 한 문장을 통째로 읽었으면 단어 인식으로 모은 것 대신 그걸로 바로 답한다
+        if not gloss:
+            return []
+        self.attempts += 1
+        self.buffer = list(gloss)
+        return await self._respond()
 
     async def tick(self) -> list:
         if self.buffer and time.monotonic() - self.last_sign_t > PAUSE_TO_SEND_S:
