@@ -59,6 +59,11 @@ class ModelGenerator:
         self.signers: Dict[str, int] = meta["signers"]
         self.word_signer: Dict[str, str] = meta.get("word_signer", {})
         self.signer = np.array([self.signers.get(self.SIGNER, 0)], dtype=np.int64)
+        self.rest_kp: Optional[np.ndarray] = None
+        if "rest_kp" in meta:
+            src = {n: i for i, n in enumerate(meta["rest_kp"]["joints"])}
+            kp = np.asarray(meta["rest_kp"]["kp"], dtype=np.float32)
+            self.rest_kp = np.stack([kp[src[n]] if n in src else np.zeros(3, np.float32) for n in JOINTS])
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 4
         self.enc = ort.InferenceSession(os.path.join(folder, "encoder.onnx"), opts, providers=["CPUExecutionProvider"])
@@ -114,9 +119,11 @@ class MotionSynth:
         self.bones = [m[0] for m in self.retargeter.map]
         self.model = ModelGenerator()
         logger.info("수어 동작 생성 모델: %d 단어", len(self.model.vocab))
-        # 쉬는 자세 = 모델이 만든 문장의 시작 자세 (손을 내린 상태에서 수어를 시작한다)
-        first = self.model.generate([next(iter(self.model.vocab))])
-        self.rest_kp = first[0] if first is not None else None
+        # 쉬는 자세: 학습 때 meta 에 저장한 '손을 내린 자세' (단어 영상 첫 프레임들의 중앙값, 좌우 대칭)
+        self.rest_kp = self.model.rest_kp
+        if self.rest_kp is None:
+            first = self.model.generate([next(iter(self.model.vocab))])
+            self.rest_kp = first[0] if first is not None else None
 
     def knows(self, gloss: str) -> bool:
         return self.model.knows(gloss)

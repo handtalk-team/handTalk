@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>웹 아바타 점검</title>
+<style>body{margin:0;background:#cfd2d3;font-family:sans-serif}#stage{position:relative;width:420px;height:640px;margin:16px auto}#bar{text-align:center}button{margin:4px;padding:6px 12px}#fps{position:fixed;top:8px;left:8px;background:#fff;padding:4px 8px}</style>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+</head><body>
+<div id="fps">-</div>
+<div id="stage"></div>
+<div id="bar"><button data-k="rest">쉬는 자세</button><button data-k="word">감사</button><button data-k="sentence">지하철 곳 가다 원하다 어디</button></div>
+<script>window.__AVATAR_DEBUG = true;</script>
+<script type="module">
+// 서버 없이 웹 아바타만 점검: assets/avatar/web/test_motion.json 의 동작을 재생한다
+const { WebAvatarStage } = await import(`./src/components/web-avatar.js?t=${Date.now()}`);
+const stage = new WebAvatarStage(document.getElementById('stage'));
+window.__stage = stage;
+await stage.ready;
+const motions = await (await fetch('assets/avatar/web/test_motion.json')).json();
+stage.playMotion(motions.rest);
+document.querySelectorAll('button').forEach((b) => b.onclick = () => stage.playMotion(motions[b.dataset.k]));
+let n = 0, t0 = performance.now();
+(function tick() { n++; const t = performance.now(); if (t - t0 > 1000) { document.getElementById('fps').textContent = `${Math.round(n * 1000 / (t - t0))} fps`; n = 0; t0 = t; } requestAnimationFrame(tick); })();
+</script>
+</body></html>

@@ -9,7 +9,8 @@
  * 본마다 기준 회전 차이(offset)를 구해 둔다. 몸과 옷 메시는 각자 같은 동작을 받는다 (Unreal 과 같은 방식).
  */
 
-const GLB_URL = 'assets/avatar/web/tutor.glb';
+const GLB_URL = 'assets/avatar/web/tutor.glb';        // 몸 + 옷 (원본 메시에서 내보냄, 스킨 가중치 정확)
+const FACE_URL = 'assets/avatar/web/tutor_face.glb';  // 얼굴 (렌더 데이터에서 내보냄: 원본 메시 내보내기에는 얼굴이 빠진다)
 const REF_URL = 'assets/avatar/ref_pose.json';
 const BLEND_S = 0.25;
 
@@ -126,7 +127,7 @@ export class WebAvatarStage {
   constructor(el) {
     this.#el = el;
     el.style.background = '#cfd2d3';
-    const r = this.#renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    const r = this.#renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: !!window.__AVATAR_DEBUG });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));   // 내장 그래픽 고려
     r.outputEncoding = THREE.sRGBEncoding;
     Object.assign(r.domElement.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
@@ -143,15 +144,31 @@ export class WebAvatarStage {
   }
 
   async #load() {
-    const [gltf, ref] = await Promise.all([
-      new Promise((res, rej) => new THREE.GLTFLoader().load(GLB_URL, res, undefined, rej)),
-      fetch(REF_URL).then((r) => r.json()),
-    ]);
+    const load = (url) => new Promise((res, rej) => new THREE.GLTFLoader().load(url, res, undefined, rej));
+    const [gltf, ref, face] = await Promise.all([load(GLB_URL), fetch(REF_URL).then((r) => r.json()), load(FACE_URL).catch(() => null)]);
+    if (face) {
+      // 얼굴 파일에서는 얼굴 메시만 쓴다. 머리·목은 움직이지 않으므로 얼굴 뼈대는 따로 움직일 필요가 없다.
+      const drop = [];
+      face.scene.traverse((o) => { if (o.isMesh && !/^Face/.test(o.name)) drop.push(o); else if (o.isMesh) o.frustumCulled = false; });
+      drop.forEach((o) => o.parent.remove(o));
+      // 눈물막·눈가 그림자·연골 같은 반투명 보조 메시는 웹 재질로 표현이 안 돼 검게 보이므로 숨긴다
+      face.scene.traverse((o) => {
+        if (o.isMesh && /Occlusion|lacrimal|Cartilage|EyeEdge|Eyelash/i.test(o.material?.name || '')) o.visible = false;
+      });
+      this.#scene.add(face.scene);
+      await this.#addHair(face);
+    }
     this.#ref = ref;
     const root = gltf.scene;
     this.#scene.add(root);
     root.updateMatrixWorld(true);
 
+    // GLTFLoader 는 같은 이름의 노드에 _1, _2 를 붙이므로 (메시마다 뼈대가 따로 있음) 원래 본 이름을 되살린다
+    const nodes = gltf.parser.json.nodes;
+    root.traverse((o) => {
+      const a = gltf.parser.associations.get(o);
+      if (o.isBone && a && a.nodes !== undefined && nodes[a.nodes].name) o.userData.boneName = nodes[a.nodes].name;
+    });
     const skins = [];
     root.traverse((o) => { if (o.isSkinnedMesh) { skins.push(o); o.frustumCulled = false; } });
     // 좌표 변환은 Body 처럼 뼈가 가장 많은 메시로 찾는다
@@ -159,18 +176,41 @@ export class WebAvatarStage {
     const ue = [], gl = [];
     const v = new THREE.Vector3();
     for (const b of main.skeleton.bones) {
-      if (!ref.pos[b.name]) continue;
-      ue.push(ref.pos[b.name]);
+      const nm = b.userData.boneName || b.name;
+      if (!ref.pos[nm]) continue;
+      ue.push(ref.pos[nm]);
       b.getWorldPosition(v);
       gl.push([v.x, v.y, v.z]);
     }
     this.#axis = fitAxisMap(ue, gl);
     console.info('[web-avatar] axis fit rms', this.#axis.rms.toFixed(4), 'scale', this.#axis.scale.toFixed(4), 'skins', skins.length);
 
-    for (const sk of skins) this.#rigs.push(this.#buildRig(sk));
+    const seen = new Set();   // 얼굴처럼 여러 메시가 한 뼈대를 같이 쓰면 한 번만
+    for (const sk of skins) { if (!seen.has(sk.skeleton)) { seen.add(sk.skeleton); this.#rigs.push(this.#buildRig(sk)); } }
     this.#frame(root);
     this.#connect();
     this.#loop();
+  }
+
+  /** 머리카락·눈썹: 그룸 대신 카드 메시 + 투명도(coverage) 텍스처. 얼굴 컴포넌트 공간에 붙인다 (머리는 움직이지 않음). */
+  async #addHair(face) {
+    let anchor = face.scene;
+    face.scene.traverse((o) => { if (o.name === 'Face' && !o.isMesh) anchor = o; });
+    const loader = new THREE.GLTFLoader();
+    const texLoader = new THREE.TextureLoader();
+    const parts = [['hair', 0x1c120c, 'tex/hair_coverage.png'], ['eyebrows', 0x1a110b, 'tex/eyebrows_coverage.png']];
+    await Promise.all(parts.map(async ([name, color, cov]) => {
+      try {
+        const [g, alpha] = await Promise.all([
+          new Promise((res, rej) => loader.load(`assets/avatar/web/${name}.glb`, res, undefined, rej)),
+          texLoader.loadAsync(`assets/avatar/web/${cov}`),
+        ]);
+        alpha.flipY = false;   // glTF UV 기준
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, alphaMap: alpha, alphaTest: 0.35, side: THREE.DoubleSide });
+        g.scene.traverse((o) => { if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
+        anchor.add(g.scene);
+      } catch (e) { console.warn(`[web-avatar] ${name} 없음`, e); }
+    }));
   }
 
   /** Unreal 회전 → GLB 월드 회전 */
@@ -181,38 +221,47 @@ export class WebAvatarStage {
   }
 
   #buildRig(skin) {
-    const bones = skin.skeleton.bones;
-    const set = new Set(bones);
+    // 뼈대 맨 위 본("root")부터 모든 자식 노드를 부모 → 자식 순서로. 스킨의 joints 목록에 없는 중간 노드도
+    // 부모 회전을 이어 주므로 같이 계산한다 (빠뜨리면 손가락이 원래 자리에 남아 피부가 늘어난다).
+    const bones = new Set(skin.skeleton.bones);
+    let top = skin.skeleton.bones[0];
+    while (top.parent && (bones.has(top.parent) || top.parent.isBone)) top = top.parent;
     const order = [];
-    const visit = (b) => {
-      const parent = set.has(b.parent) ? b.parent : null;
-      const refQ = this.#ref.rot[b.name];
+    const visit = (node, parentEntry) => {
+      const name = node.userData.boneName || node.name;
+      const refQ = this.#ref.rot[name];
       let offset = null;
       if (refQ) {
         // 같은 본이 참조 포즈에서 갖는 회전 차이 (GLB 월드 = 변환(UE 회전) × offset)
-        const w = new THREE.Quaternion(); b.getWorldQuaternion(w);
+        const w = new THREE.Quaternion(); node.getWorldQuaternion(w);
         const u = this.#toWorld(new THREE.Quaternion(...refQ), new THREE.Quaternion());
         offset = u.invert().multiply(w);
       }
-      order.push({ bone: b, parent, offset, bindQ: b.quaternion.clone(), world: new THREE.Quaternion() });
-      b.children.forEach((c) => { if (set.has(c)) visit(c); });
+      const entry = { node, name, parent: parentEntry, offset, bindQ: node.quaternion.clone(), world: new THREE.Quaternion() };
+      order.push(entry);
+      node.children.forEach((c) => { if (!c.isMesh) visit(c, entry); });
     };
-    bones.filter((b) => !set.has(b.parent)).forEach(visit);
+    visit(top, null);
     const rootParentQ = new THREE.Quaternion();
-    if (order[0]?.bone.parent) order[0].bone.parent.getWorldQuaternion(rootParentQ);
-    const byName = new Map(order.map((o) => [o.bone.name, o]));
-    return { order, byName, rootParentQ };
+    if (top.parent) top.parent.getWorldQuaternion(rootParentQ);
+    return { order, rootParentQ };
   }
 
-  /** 상반신이 화면에 차게 카메라를 맞춘다 */
+  /** 머리부터 허리까지(수어하는 공간)가 화면에 차게 카메라를 맞춘다 */
   #frame(root) {
-    const box = new THREE.Box3().setFromObject(root);
-    const size = box.getSize(new THREE.Vector3());
-    const top = box.max.y;
-    const target = new THREE.Vector3((box.min.x + box.max.x) / 2, top - size.y * 0.26, (box.min.z + box.max.z) / 2);
-    const front = new THREE.Vector3(0, 0, 1);
-    // 얼굴이 향한 쪽: 코 본이 있으면 그 방향, 없으면 +Z
-    this.#camera.position.copy(target).addScaledVector(front, size.y * 1.05);
+    let head = null, pelvis = null;
+    root.traverse((o) => {
+      const n = o.userData.boneName;
+      if (n === 'head' && !head) head = o;
+      if (n === 'pelvis' && !pelvis) pelvis = o;
+    });
+    const h = new THREE.Vector3(), p = new THREE.Vector3();
+    if (head && pelvis) { head.getWorldPosition(h); pelvis.getWorldPosition(p); }
+    else { const box = new THREE.Box3().setFromObject(root); h.set(0, box.max.y, 0); p.set(0, box.min.y + (box.max.y - box.min.y) * 0.53, 0); }
+    const span = (h.y - p.y) * 1.35;                 // 머리 위 여유 ~ 허리
+    const target = new THREE.Vector3(h.x, h.y + 0.22 - span / 2, h.z);
+    const dist = (span / 2) / Math.tan(THREE.MathUtils.degToRad(this.#camera.fov / 2));
+    this.#camera.position.set(target.x, target.y, target.z + dist);   // 메타휴먼 GLB 는 +Z 가 앞
     this.#camera.lookAt(target);
     this.#resize();
   }
@@ -223,12 +272,7 @@ export class WebAvatarStage {
     const ws = this.#ws = new WebSocket(`${proto}://${location.host}/ws/avatar`);
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
-      if (msg.type === 'motion' && msg.bones?.length) {
-        const m = parseMotion(msg);
-        if (!m.n) return;
-        while (this.#pose.length < m.bones.length) { this.#pose.push(new THREE.Quaternion()); this.#tmp.push(new THREE.Quaternion()); }
-        this.#player.play(m, performance.now() / 1000);
-      }
+      if (msg.type === 'motion' && msg.bones?.length) this.playMotion(msg);
     };
     ws.onclose = () => { if (!this.#closed) setTimeout(() => this.#connect(), 2000); };
   }
@@ -241,14 +285,14 @@ export class WebAvatarStage {
     const wq = new THREE.Quaternion();
     for (const rig of this.#rigs) {
       for (const o of rig.order) {
-        const parentW = o.parent ? rig.byName.get(o.parent.name).world : rig.rootParentQ;
-        const t = target.get(o.bone.name);
+        const parentW = o.parent ? o.parent.world : rig.rootParentQ;
+        const t = target.get(o.name);
         if (t && o.offset) {
           this.#toWorld(t, wq).multiply(o.offset);           // 원하는 월드 회전
           o.world.copy(wq);
-          o.bone.quaternion.copy(parentW).invert().multiply(wq);
+          o.node.quaternion.copy(parentW).invert().multiply(wq);
         } else {
-          o.bone.quaternion.copy(o.bindQ);
+          o.node.quaternion.copy(o.bindQ);
           o.world.copy(parentW).multiply(o.bindQ);
         }
       }
@@ -267,6 +311,25 @@ export class WebAvatarStage {
     this.#renderer.setSize(w, h, false);
     this.#camera.aspect = w / h;
     this.#camera.updateProjectionMatrix();
+  }
+
+  /** 점검용: 내부 상태 */
+  debug() { return { rigs: this.#rigs, axis: this.#axis, scene: this.#scene }; }
+
+  /** 점검용: 지금 동작의 t 초 자세를 바로 그린다 (화면이 숨겨져 애니메이션 프레임이 멈출 때) */
+  renderAt(t) {
+    const p = this.#player;
+    const now = (p.start || 0) + t;
+    this.#applyPose(now);
+    this.#renderer.render(this.#scene, this.#camera);
+  }
+
+  /** 서버 없이 동작 메시지를 직접 넣는다 (점검용) */
+  playMotion(msg) {
+    const m = parseMotion(msg);
+    if (!m.n) return;
+    while (this.#pose.length < m.bones.length) { this.#pose.push(new THREE.Quaternion()); this.#tmp.push(new THREE.Quaternion()); }
+    this.#player.play(m, performance.now() / 1000);
   }
 
   // 동작은 서버가 /ws/avatar 로 직접 보낸다 (llm_response, lesson 마다 motion)
