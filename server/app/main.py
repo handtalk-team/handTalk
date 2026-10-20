@@ -69,6 +69,13 @@ import os
 # Windows 레지스트리가 .js 를 text/plain 으로 알려 주면 브라우저가 ES 모듈을 거부한다
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
+# 오프라인 묶음(client/vendor, 웹 메타휴먼 GLB)용
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("model/gltf-binary", ".glb")
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("application/octet-stream", ".tflite")
+mimetypes.add_type("application/octet-stream", ".data")
+mimetypes.add_type("application/octet-stream", ".binarypb")
 client_dir = os.path.join(os.path.dirname(__file__), "..", "..", "client")
 if os.path.isdir(client_dir):
     app.mount("/app", StaticFiles(directory=client_dir, html=True), name="client")

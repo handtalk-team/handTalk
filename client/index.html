@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>handTalk · AI 수어 튜터</title>
   <meta name="description" content="카메라와 장갑으로 수어를 하면 AI 아바타 선생님이 수어로 답하는 실시간 수어 학습 서비스" />
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+  <link rel="stylesheet" href="vendor/fonts/pretendard.css" />
   <link rel="stylesheet" href="styles/tokens.css" />
   <link rel="stylesheet" href="styles/app.css" />
 </head>
@@ -14,12 +13,12 @@
   <noscript>handTalk 은 자바스크립트가 필요합니다.</noscript>
 
   <!-- 3D 아바타 미리보기 -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="vendor/three/three.min.js"></script>
+  <script src="vendor/three/GLTFLoader.js"></script>
   <!-- MediaPipe Hands (브라우저에서 손 랜드마크 추출) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="vendor/mediapipe/camera_utils.js"></script>
+  <script src="vendor/mediapipe/drawing_utils.js"></script>
+  <script src="vendor/mediapipe/hands/hands.js"></script>
 
   <script type="module" src="src/main.js"></script>
 </body>

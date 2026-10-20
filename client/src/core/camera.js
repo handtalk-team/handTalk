@@ -41,7 +41,8 @@ export class CameraCapture {
     this.#canvas.width = this.#video.videoWidth;
     this.#canvas.height = this.#video.videoHeight;
 
-    this.#hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    // 오프라인용으로 받아 둔 파일 (tools/fetch_vendor.py)
+    this.#hands = new Hands({ locateFile: (f) => `vendor/mediapipe/hands/${f}` });
     this.#hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.3 });
     this.#hands.onResults((r) => this.#onResults(r));
     this.#mpCamera = new Camera(this.#video, {

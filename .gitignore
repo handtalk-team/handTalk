@@ -60,3 +60,4 @@ client/assets/motions/*.json
 server/.venv/
 client/assets/avatar/
 client/assets/lexicon.json
+client/vendor/
