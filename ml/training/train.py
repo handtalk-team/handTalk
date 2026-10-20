@@ -73,7 +73,7 @@ def train(args) -> None:
     # ── Data ─────────────────────────────────────────────────────
     ds_kw = dict(window_T=WINDOW_T, data_dir=data_dir, packed=args.packed,
                  holdout_test=not args.no_test_split)
-    train_ds = SignDataset(split="train", augment=True,  **ds_kw)
+    train_ds = SignDataset(split="train", augment=True, webcam_aug=args.webcam_aug, **ds_kw)
     val_ds   = SignDataset(split="val",   augment=False, **ds_kw)
 
     if len(train_ds) == 0:
@@ -109,7 +109,7 @@ def train(args) -> None:
 
     # ── Optimiser & scheduler ─────────────────────────────────────
     criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTH)
-    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=WEIGHT_DECAY)
     # Cosine LR with linear warm-up (5 epochs)
     warmup_epochs = 5
     scheduler = optim.lr_scheduler.SequentialLR(
@@ -262,6 +262,9 @@ if __name__ == "__main__":
     parser.add_argument("--export",      action="store_true", help="학습 후 ONNX 내보내기")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader 워커 수")
     parser.add_argument("--epochs",      type=int, default=EPOCHS, help="최대 에폭 수")
+    parser.add_argument("--lr",          type=float, default=LR, help="학습률 (미세조정은 더 낮게, 예: 5e-5)")
+    parser.add_argument("--webcam_aug",  type=float, default=0.0,
+                        help="웹캠(MediaPipe) 조건 흉내 증강 확률 (dataset.webcam_augment), 예: 0.7")
     parser.add_argument("--packed",      action="store_true",
                         help="클립을 RAM 대신 float16 packed 캐시(memmap)에서 읽기 (전체 AI Hub용)")
     parser.add_argument("--no_test_split", action="store_true",

@@ -156,6 +156,51 @@ def _frame_dropout(seq: np.ndarray, p: float = 0.08) -> np.ndarray:
     return out
 
 
+def _rot(yaw: float, pitch: float, roll: float) -> np.ndarray:
+    cy, sy, cp, sp, cr, sr = np.cos(yaw), np.sin(yaw), np.cos(pitch), np.sin(pitch), np.cos(roll), np.sin(roll)
+    ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    rx = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+    rz = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
+    return (rz @ rx @ ry).astype(np.float32)
+
+
+def webcam_augment(seq: np.ndarray) -> np.ndarray:
+    """
+    AI Hub(스튜디오 다중 카메라 3D) → 웹캠 1대 + MediaPipe 입력 차이를 흉내 내는 증강.
+      - 손 방향 회전 (카메라 각도/손목 각도 차이)
+      - 깊이(z) 축 스케일·잡음 확대 (단안 MediaPipe z 는 부정확)
+      - 관절별 떨림
+      - 손 일시 놓침 (몇 프레임 동안 해당 손 전부 0)
+    flex 5는 바뀐 좌표로 다시 계산.
+    """
+    from ml.preprocessing.extract_aihub import _estimate_flex   # 순환 import 방지
+    out = seq.copy()
+    T = len(seq)
+    for h, (pos_sl, flex_sl) in enumerate(((slice(0, 63), slice(126, 131)), (slice(63, 126), slice(131, 136)))):
+        pts = out[:, pos_sl].reshape(T, 21, 3)
+        present = np.abs(pts).sum(axis=(1, 2)) > 0
+        if not present.any():
+            continue
+        R = _rot(np.radians(random.uniform(-25, 25)), np.radians(random.uniform(-15, 15)),
+                 np.radians(random.uniform(-15, 15)))
+        pts = pts @ R.T
+        pts[..., 2] *= random.uniform(0.5, 1.5)
+        pts[..., 2] += np.random.normal(0, 0.08, pts[..., 2].shape)
+        pts += np.random.normal(0, 0.03, pts.shape)
+        pts[~present] = 0.0
+        if T > 8 and random.random() < 0.3:          # 손 놓침
+            n = random.randint(3, min(10, T // 3))
+            s = random.randint(0, T - n)
+            pts[s:s + n] = 0.0
+            present = present.copy(); present[s:s + n] = False
+        out[:, pos_sl] = pts.reshape(T, 63).astype(np.float32)
+        flex = np.zeros((T, 5), np.float32)
+        for t in np.nonzero(present)[0]:
+            flex[t] = _estimate_flex(out[t, pos_sl])
+        out[:, flex_sl] = flex
+    return out
+
+
 def _pad_or_trim(seq: np.ndarray, target_T: int = 60) -> np.ndarray:
     T = seq.shape[0]
     if T >= target_T:
@@ -261,12 +306,15 @@ class SignDataset(Dataset):
         data_dir: Optional[Path] = None,
         packed: bool = False,
         holdout_test: bool = True,
+        webcam_aug: float = 0.0,
     ) -> None:
         """
         packed=True      : 클립을 RAM에 올리지 않고 float16 packed 캐시(memmap)에서 읽음 (전체 AI Hub용)
         holdout_test=False: 별도 테스트셋이 있을 때 수어자 split 에서 test 몫을 train 으로
         split="all"      : 폴더 안 전체 클립 (별도 테스트셋 평가용)
+        webcam_aug       : 이 확률로 webcam_augment 적용 (train 이 아니어도 적용 → 웹캠 조건 평가용)
         """
+        self.webcam_aug = webcam_aug
         self.augment  = augment and (split == "train")
         self.window_T = window_T
         self.samples: List[Tuple[np.ndarray, int]] = []
@@ -356,6 +404,8 @@ class SignDataset(Dataset):
                 seq = _scale_jitter(seq)
             if random.random() < 0.5:
                 seq = _frame_dropout(seq)
+        if self.webcam_aug and random.random() < self.webcam_aug:
+            seq = webcam_augment(seq)
 
         seq = _pad_or_trim(seq, self.window_T)  # (60, 136)
         seq = add_velocity(seq)                 # (60, 272) ← 속도 추가
