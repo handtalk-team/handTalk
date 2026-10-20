@@ -2,7 +2,7 @@
 	"FileVersion": 3,
 	"EngineAssociation": "5.7",
 	"Category": "",
-	"Description": "handTalk MetaHuman 수어 튜터 클라이언트",
+	"Description": "handTalk MetaHuman \uc218\uc5b4 \ud29c\ud130 \ud074\ub77c\uc774\uc5b8\ud2b8",
 	"Modules": [
 		{
 			"Name": "HandTalkTutor",
@@ -56,6 +56,10 @@
 		},
 		{
 			"Name": "PixelStreaming2",
+			"Enabled": true
+		},
+		{
+			"Name": "GLTFExporter",
 			"Enabled": true
 		}
 	]

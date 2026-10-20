@@ -10,14 +10,22 @@
  * 클립 이름은 서버 avatar_commands, Unreal /Game/HandTalk/Signs 와 같다.
  */
 import { loadSettings } from '../core/store.js';
+import { WebAvatarStage, webAvatarAvailable } from './web-avatar.js';
 
 export function liveTutorUrl() {
   const s = loadSettings().avatarStreamUrl?.trim();
   return (s || `http://${location.hostname || 'localhost'}:8080`).replace(/\/$/, '');
 }
 
-/** 실시간 메타휴먼 → 메타휴먼 영상 → 3D 미리보기 순서로 쓸 수 있는 것을 고른다 */
+/**
+ * 웹 메타휴먼(브라우저 three.js, 언리얼 없음) → 실시간 메타휴먼(Unreal Pixel Streaming) 순서로 고른다.
+ * 녹화 클립을 재생하는 예전 방식(영상, 막대 인형)은 쓰지 않는다: 모든 동작은 서버의 동작 생성 모델이 만든다.
+ */
 export async function createAvatarStage(el, opts = {}) {
+  if (await webAvatarAvailable()) {
+    const stage = new WebAvatarStage(el, opts);
+    try { await stage.ready; return stage; } catch (e) { console.warn('[web-avatar] 불러오기 실패', e); stage.destroy(); }
+  }
   if (loadSettings().liveTutor !== false) {
     try {
       const ctrl = new AbortController();
@@ -26,10 +34,6 @@ export async function createAvatarStage(el, opts = {}) {
       return new LiveTutorStage(el, opts);
     } catch { /* 실시간 튜터 서버 없음 */ }
   }
-  try {
-    const res = await fetch('assets/avatar/idle.jpg', { method: 'HEAD' });
-    if (res.ok) return new MetaHumanVideoStage(el, opts);
-  } catch { /* 영상 없음 */ }
   return new AvatarStage(el, opts);
 }
 
