@@ -3,6 +3,8 @@ Central configuration — all env-var driven so values never live in code.
 Copy server/.env.example → server/.env and fill in the blanks.
 """
 
+import os
+
 from functools import lru_cache
 from typing import List
 
@@ -102,3 +104,9 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def local_or(rel: str, fallback: str) -> str:
+    """시연용 묶음처럼 server/ml/models 아래에 파일이 있으면 그걸, 없으면 이 PC 의 기본 위치를 쓴다"""
+    here = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml", "models", rel))
+    return here if os.path.exists(here) else fallback

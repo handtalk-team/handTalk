@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
+from app.core.config import local_or
+
 from app.services.avatar import hand_limits
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ sys.path.insert(0, os.path.join(_ROOT, "client", "unreal", "HandTalkTutor", "Scr
 import sign_retarget as sr  # noqa: E402  (언리얼 없이도 도는 순수 파이썬 리타깃)
 
 REF_POSE = os.environ.get("HANDTALK_REF_POSE", os.path.join(_ROOT, "client", "assets", "avatar", "ref_pose.json"))
-MODEL_DIR = os.environ.get("HANDTALK_SIGN_MODEL", r"C:\handtalk\models\sign_motion")
+MODEL_DIR = os.environ.get("HANDTALK_SIGN_MODEL") or local_or("sign_motion", r"C:\handtalk\models\sign_motion")
 FPS = 30.0
 EDGE = 8   # 쉬는 자세 ↔ 문장 처음/끝을 잇는 프레임
 

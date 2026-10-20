@@ -18,7 +18,7 @@ import os
 from functools import lru_cache
 from typing import Dict, List, Optional
 
-from app.core.config import get_settings
+from app.core.config import get_settings, local_or
 
 settings = get_settings()
 
@@ -217,7 +217,7 @@ def clip_for(gloss: str) -> Optional[str]:
     return lexicon().get(gloss)
 
 
-SIGN_MODEL_META = os.path.join(os.environ.get("HANDTALK_SIGN_MODEL", r"C:\handtalk\models\sign_motion"), "meta.json")
+SIGN_MODEL_META = os.path.join(os.environ.get("HANDTALK_SIGN_MODEL") or local_or("sign_motion", r"C:\handtalk\models\sign_motion"), "meta.json")
 
 
 @lru_cache(maxsize=1)

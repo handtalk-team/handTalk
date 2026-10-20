@@ -19,7 +19,9 @@ import random
 from functools import lru_cache
 from typing import Iterable, List
 
-SENTENCES_PATH = os.environ.get("HANDTALK_SENTENCES", r"C:\handtalk\sentdata\labels\sentences.json")
+from app.core.config import local_or
+
+SENTENCES_PATH = os.environ.get("HANDTALK_SENTENCES") or local_or("ksl_sentences.json", r"C:\handtalk\sentdata\labels\sentences.json")
 
 KSL_RULES = """[한국수어 문장 규칙 — gloss 는 반드시 이 규칙으로 짠다]
 1. 조사·어미를 쓰지 않는다. 은/는/이/가/을/를/에/에서/요/습니다 같은 말은 gloss 에 넣지 않고 기본형 단어만 쓴다. (예: "병원에 갔어요" → 병원 가다 끝)
