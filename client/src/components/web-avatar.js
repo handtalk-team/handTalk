@@ -123,12 +123,15 @@ export class WebAvatarStage {
   #ref = null; #axis = null;
   #pose = []; #tmp = [];
   #m = new THREE.Matrix4(); #q = new THREE.Quaternion();
+  #ratio = 1; #maxRatio = 1; #frames = 0; #fpsT0 = 0;
 
   constructor(el) {
     this.#el = el;
     el.style.background = '#cfd2d3';
     const r = this.#renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: !!window.__AVATAR_DEBUG });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));   // 내장 그래픽 고려
+    this.#maxRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    this.#ratio = Math.min(this.#maxRatio, 1.25);   // 처음엔 조금 낮게 시작해서 프레임에 맞춰 조절
+    r.setPixelRatio(this.#ratio);
     r.outputEncoding = THREE.sRGBEncoding;
     Object.assign(r.domElement.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
     el.prepend(r.domElement);
@@ -171,6 +174,8 @@ export class WebAvatarStage {
     });
     const skins = [];
     root.traverse((o) => { if (o.isSkinnedMesh) { skins.push(o); o.frustumCulled = false; } });
+    // 화면에는 머리부터 허리까지만 나오므로 신발은 그리지 않는다 (내장 그래픽 부담 줄이기)
+    skins.forEach((s) => { if (/shs_|shoe|sneaker/i.test(s.name)) s.visible = false; });
     // 좌표 변환은 Body 처럼 뼈가 가장 많은 메시로 찾는다
     const main = skins.reduce((a, b) => (b.skeleton.bones.length > a.skeleton.bones.length ? b : a), skins[0]);
     const ue = [], gl = [];
@@ -302,8 +307,29 @@ export class WebAvatarStage {
   #loop() {
     if (this.#closed) return;
     this.#raf = requestAnimationFrame(() => this.#loop());
-    this.#applyPose(performance.now() / 1000);
+    const now = performance.now();
+    this.#applyPose(now / 1000);
     this.#renderer.render(this.#scene, this.#camera);
+    this.#adapt(now);
+  }
+
+  /** 내장 그래픽 대응: 2초마다 프레임을 재서 느리면 렌더 해상도를 낮추고, 여유가 있으면 다시 올린다 */
+  #adapt(now) {
+    if (!this.#fpsT0) { this.#fpsT0 = now; this.#frames = 0; return; }
+    this.#frames++;
+    if (now - this.#fpsT0 < 2000) return;
+    const fps = this.#frames * 1000 / (now - this.#fpsT0);
+    this.#fpsT0 = now; this.#frames = 0;
+    if (document.hidden) return;
+    let r = this.#ratio;
+    if (fps < 40) r = Math.max(0.6, r - 0.15);
+    else if (fps > 57) r = Math.min(this.#maxRatio, r + 0.1);
+    if (Math.abs(r - this.#ratio) > 0.01) {
+      this.#ratio = r;
+      this.#renderer.setPixelRatio(r);
+      this.#resize();
+    }
+    this.fps = Math.round(fps);
   }
 
   #resize() {
