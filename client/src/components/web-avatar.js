@@ -80,7 +80,16 @@ function parseMotion(msg) {
   }
   const n = q.length / nb;
   const fps = msg.fps || 30;
-  return { bones: msg.bones, q, n, fps, loop: !!msg.loop, loopGap: msg.loop_gap || 0, duration: n > 1 ? (n - 1) / fps : 0 };
+  return { bones: msg.bones, q, n, fps, loop: !!msg.loop, loopGap: msg.loop_gap || 0, duration: n > 1 ? (n - 1) / fps : 0, nms: msg.nms || null };
+}
+
+/** GLTFLoader 는 같은 이름의 노드에 _1, _2 를 붙이므로 (메시마다 뼈대가 따로 있음) 원래 본 이름을 되살린다 */
+function restoreBoneNames(gltf) {
+  const nodes = gltf.parser.json.nodes;
+  gltf.scene.traverse((o) => {
+    const a = gltf.parser.associations.get(o);
+    if (o.isBone && a && a.nodes !== undefined && nodes[a.nodes].name) o.userData.boneName = nodes[a.nodes].name;
+  });
 }
 
 // ── 좌표 변환: Unreal 컴포넌트 공간 → GLB 월드 공간 ────────────────────────
@@ -124,6 +133,7 @@ export class WebAvatarStage {
   #pose = []; #tmp = [];
   #m = new THREE.Matrix4(); #q = new THREE.Quaternion();
   #ratio = 1; #maxRatio = 1; #frames = 0; #fpsT0 = 0;
+  #brows = null;
 
   constructor(el) {
     this.#el = el;
@@ -150,7 +160,7 @@ export class WebAvatarStage {
     const load = (url) => new Promise((res, rej) => new THREE.GLTFLoader().load(url, res, undefined, rej));
     const [gltf, ref, face] = await Promise.all([load(GLB_URL), fetch(REF_URL).then((r) => r.json()), load(FACE_URL).catch(() => null)]);
     if (face) {
-      // 얼굴 파일에서는 얼굴 메시만 쓴다. 머리·목은 움직이지 않으므로 얼굴 뼈대는 따로 움직일 필요가 없다.
+      // 얼굴 파일에서는 얼굴 메시만 쓴다 (몸·옷은 몸 파일 것을 씀)
       const drop = [];
       face.scene.traverse((o) => { if (o.isMesh && !/^Face/.test(o.name)) drop.push(o); else if (o.isMesh) o.frustumCulled = false; });
       drop.forEach((o) => o.parent.remove(o));
@@ -159,19 +169,14 @@ export class WebAvatarStage {
         if (o.isMesh && /Occlusion|lacrimal|Cartilage|EyeEdge|Eyelash/i.test(o.material?.name || '')) o.visible = false;
       });
       this.#scene.add(face.scene);
-      await this.#addHair(face);
+      restoreBoneNames(face);
     }
     this.#ref = ref;
     const root = gltf.scene;
     this.#scene.add(root);
     root.updateMatrixWorld(true);
 
-    // GLTFLoader 는 같은 이름의 노드에 _1, _2 를 붙이므로 (메시마다 뼈대가 따로 있음) 원래 본 이름을 되살린다
-    const nodes = gltf.parser.json.nodes;
-    root.traverse((o) => {
-      const a = gltf.parser.associations.get(o);
-      if (o.isBone && a && a.nodes !== undefined && nodes[a.nodes].name) o.userData.boneName = nodes[a.nodes].name;
-    });
+    restoreBoneNames(gltf);
     const skins = [];
     root.traverse((o) => { if (o.isSkinnedMesh) { skins.push(o); o.frustumCulled = false; } });
     // 화면에는 머리부터 허리까지만 나오므로 신발은 그리지 않는다 (내장 그래픽 부담 줄이기)
@@ -192,15 +197,26 @@ export class WebAvatarStage {
 
     const seen = new Set();   // 얼굴처럼 여러 메시가 한 뼈대를 같이 쓰면 한 번만
     for (const sk of skins) { if (!seen.has(sk.skeleton)) { seen.add(sk.skeleton); this.#rigs.push(this.#buildRig(sk)); } }
+    if (face) {
+      // 얼굴 뼈대도 같은 동작을 받아야 고개를 끄덕이거나 저을 때 얼굴이 같이 움직인다
+      let faceSkin = null;
+      face.scene.traverse((o) => { if (o.isSkinnedMesh && !faceSkin) faceSkin = o; });
+      if (faceSkin) this.#rigs.push(this.#buildRig(faceSkin));
+      await this.#addHair(face);
+    }
     this.#frame(root);
     this.#connect();
     this.#loop();
   }
 
-  /** 머리카락·눈썹: 그룸 대신 카드 메시 + 투명도(coverage) 텍스처. 얼굴 컴포넌트 공간에 붙인다 (머리는 움직이지 않음). */
+  /** 머리카락·눈썹: 그룸 대신 카드 메시 + 투명도(coverage) 텍스처. 얼굴 머리 뼈에 붙여 고개를 따라 움직인다. */
   async #addHair(face) {
-    let anchor = face.scene;
-    face.scene.traverse((o) => { if (o.name === 'Face' && !o.isMesh) anchor = o; });
+    let comp = face.scene, head = null;
+    face.scene.traverse((o) => {
+      if (o.name === 'Face' && !o.isMesh) comp = o;
+      if (o.userData.boneName === 'head' && !head) head = o;
+    });
+    face.scene.updateMatrixWorld(true);
     const loader = new THREE.GLTFLoader();
     const texLoader = new THREE.TextureLoader();
     const parts = [['hair', 0x1c120c, 'tex/hair_coverage.png'], ['eyebrows', 0x1a110b, 'tex/eyebrows_coverage.png']];
@@ -213,7 +229,12 @@ export class WebAvatarStage {
         alpha.flipY = false;   // glTF UV 기준
         const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, alphaMap: alpha, alphaTest: 0.35, side: THREE.DoubleSide });
         g.scene.traverse((o) => { if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
-        anchor.add(g.scene);
+        comp.add(g.scene);
+        if (head) head.attach(g.scene);          // 고개를 움직이면 머리카락·눈썹도 따라오게 (월드 위치 유지)
+        if (name === 'eyebrows' && head) {
+          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()).invert());
+          this.#brows = { obj: g.scene, base: g.scene.position.clone(), up, scale: 1 / head.getWorldScale(new THREE.Vector3()).y };
+        }
       } catch (e) { console.warn(`[web-avatar] ${name} 없음`, e); }
     }));
   }
@@ -288,20 +309,50 @@ export class WebAvatarStage {
     const target = new Map();
     bones.forEach((name, i) => target.set(name, this.#pose[i]));
     const wq = new THREE.Quaternion();
+    const nm = this.#nonManual(now);
     for (const rig of this.#rigs) {
       for (const o of rig.order) {
         const parentW = o.parent ? o.parent.world : rig.rootParentQ;
         const t = target.get(o.name);
         if (t && o.offset) {
           this.#toWorld(t, wq).multiply(o.offset);           // 원하는 월드 회전
-          o.world.copy(wq);
-          o.node.quaternion.copy(parentW).invert().multiply(wq);
         } else {
-          o.node.quaternion.copy(o.bindQ);
-          o.world.copy(parentW).multiply(o.bindQ);
+          wq.copy(parentW).multiply(o.bindQ);
         }
+        const head = o.name === 'head' ? nm.head : o.name === 'neck_02' ? nm.neck : null;
+        if (head) wq.premultiply(head);                      // 고개 끄덕임·갸웃·젓기 (월드 기준)
+        o.world.copy(wq);
+        o.node.quaternion.copy(parentW).invert().multiply(wq);
       }
     }
+    if (this.#brows) {
+      const b = this.#brows;
+      b.obj.position.copy(b.base).addScaledVector(b.up, nm.brow * b.scale);
+    }
+  }
+
+  /**
+   * 한국수어 비수지 신호: 의문사 질문(wh) = 눈썹 모으며 내리고 고개 살짝 앞·옆으로,
+   * 예/아니오 질문(yn) = 눈썹 올리고 고개 앞으로, 부정(neg) = 고개 젓기. 서버 motion.nms 의 구간에만.
+   */
+  #nonManual(now) {
+    const out = { head: null, neck: null, brow: 0 };
+    const p = this.#player, m = p.current;
+    if (!m || !m.nms || !m.duration) return out;
+    let t = now - p.start;
+    if (m.loop) t %= m.duration + m.loopGap;
+    const a = m.nms.start * m.duration, b = m.nms.end * m.duration, ramp = 0.25;
+    if (t < a || t > b) return out;
+    const w = Math.min(1, (t - a) / ramp, (b - t) / ramp);
+    const e = w * w * (3 - 2 * w);
+    const D = THREE.MathUtils.degToRad;
+    const eul = new THREE.Euler();
+    if (m.nms.kind === 'yn') { eul.set(D(9) * e, 0, 0); out.brow = 0.004 * e; }
+    else if (m.nms.kind === 'wh') { eul.set(D(6) * e, 0, D(5) * e); out.brow = -0.003 * e; }
+    else if (m.nms.kind === 'neg') { eul.set(0, D(11) * e * Math.sin((t - a) * Math.PI * 2 * 2.2), 0); out.brow = -0.002 * e; }
+    out.head = new THREE.Quaternion().setFromEuler(eul);
+    out.neck = new THREE.Quaternion().slerp(out.head, 0.4);
+    return out;
   }
 
   #loop() {

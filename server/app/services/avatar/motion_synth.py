@@ -169,6 +169,24 @@ def get_synth() -> Optional[MotionSynth]:
         return None
 
 
+WH_WORDS = {"무엇", "어디", "언제", "누구", "왜", "어떻게", "몇", "얼마", "방법", "곳", "몇호"}
+NEG_WORDS = {"없다", "아니다", "안되다", "못하다", "불가능", "싫다", "모르다", "안"}
+
+
+def non_manual(text: str, gloss: Sequence[str]) -> Optional[dict]:
+    """한국수어 비수지 신호(표정·머리 움직임): 의문사 질문 / 예·아니오 질문 / 부정.
+    문장 뒷부분(의문사·부정어가 나오는 곳)에 얹는다. start, end 는 동작 길이에 대한 비율."""
+    if not gloss:
+        return None
+    if any(g in NEG_WORDS for g in gloss):
+        return {"kind": "neg", "start": 0.45, "end": 0.95}
+    if gloss[-1] in WH_WORDS or any(g in WH_WORDS for g in gloss[-2:]):
+        return {"kind": "wh", "start": 0.4, "end": 0.97}
+    if (text or "").strip().endswith("?"):
+        return {"kind": "yn", "start": 0.5, "end": 0.97}
+    return None
+
+
 def motion_for(data: dict) -> Optional[dict]:
     """아바타로 가는 메시지(llm_response / lesson)를 실시간 동작 메시지로 바꾼다. 해당 없으면 None."""
     synth = get_synth()
@@ -177,10 +195,16 @@ def motion_for(data: dict) -> Optional[dict]:
     kind = data.get("type")
     if kind == "llm_response":
         gloss = [g for g in data.get("gloss") or [] if synth.knows(g)]
-        return synth.from_gloss(gloss) if gloss else None
+        msg = synth.from_gloss(gloss) if gloss else None
+        if msg:
+            msg["nms"] = non_manual(data.get("text", ""), gloss)
+        return msg
     if kind == "lesson":
         target = data.get("target") or {}
         gloss = [] if data.get("done") else [g for g in target.get("gloss") or [] if synth.knows(g)]
         # 연습 중인 목표 문장은 쉬었다가 반복. 목표가 없으면 쉬는 자세로
-        return synth.from_gloss(gloss, loop=True, loop_gap=1.8) if gloss else synth.rest()
+        msg = synth.from_gloss(gloss, loop=True, loop_gap=1.8) if gloss else synth.rest()
+        if msg and gloss:
+            msg["nms"] = non_manual(target.get("text", ""), gloss)
+        return msg
     return None

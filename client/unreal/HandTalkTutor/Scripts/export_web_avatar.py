@@ -17,6 +17,7 @@ import sys
 import unreal
 
 LEVEL = "/Game/HandTalk/Live/TutorLive"
+FACE_MESH = "/Game/MetaHumans/Vivian/Face/Vivian_FaceMesh"
 HAIR_CARDS = {
     "hair": "/Game/MetaHumans/Vivian/MaleHair/Hair/Hair_M_SideSweptFringe_CardsMesh_Group0_LOD1",
     "eyebrows": "/Game/MetaHumans/Vivian/MaleHair_pfn/Hair/Eyebrows_M_Messy_CardsMesh_Group0_LOD1",
@@ -29,6 +30,8 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--lod", type=int, default=1)
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--tex", type=int, default=1024, help="굽는 텍스처 크기")
+    ap.add_argument("--face", action="store_true",
+                    help="얼굴 메시만 원본 데이터로 내보냄 (face.glb). 렌더 데이터 내보내기는 본 매핑이 깨져 얼굴 뼈를 움직이면 일그러진다")
     ap.add_argument("--hair", action="store_true", help="머리카락·눈썹 카드 메시만 내보냄 (hair.glb, eyebrows.glb)")
     ap.add_argument("--source", action="store_true",
                     help="렌더 데이터 대신 원본 메시(MeshDescription)로 내보냄. 렌더 데이터는 본 영향 수 무제한/청킹 설정 때문에 "
@@ -66,6 +69,13 @@ def main(argv: list[str]) -> None:
             unreal.log_warning(f"[handtalk] option {name}: {e}")
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    if args.face:
+        mesh = unreal.load_asset(FACE_MESH)
+        opt.set_editor_property("export_source_model", True)
+        dst = os.path.join(os.path.dirname(args.out), "face.glb")
+        res = unreal.GLTFExporter.export_to_gltf(mesh, dst, opt, set())
+        unreal.log(f"[handtalk] face -> {dst} ({os.path.getsize(dst) if os.path.exists(dst) else 0} bytes) res={res}")
+        return
     if args.hair:
         # 그룸(머리카락) 컴포넌트는 glTF 로 안 나가므로, 같은 머리 모양의 카드 메시(정적 메시)를 따로 내보낸다
         for name, path in HAIR_CARDS.items():
