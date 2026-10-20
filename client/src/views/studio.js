@@ -121,7 +121,7 @@ export function render(root, { mode = 'word', id = '' }) {
       onClip: (clip) => glossRow.querySelectorAll('.gloss').forEach((g) => g.toggleAttribute('data-active', g.dataset.clip === clip && !!clip)),
     }).then((a) => {
       avatar = a;
-      badge.textContent = { web: 'AI 선생님 · 메타휴먼', live: 'AI 선생님 · 실시간', metahuman: 'AI 선생님 · 메타휴먼 영상' }[a.kind] || 'AI 선생님 · 3D 미리보기';
+      badge.textContent = { web: 'AI 선생님 · 메타휴먼', live: 'AI 선생님 · 실시간' }[a.kind] || 'AI 선생님 · 준비 중';
       if (pendingClips) { a.play(pendingClips); pendingClips = null; }
       if (pendingDemo) { applyDemo(pendingDemo); pendingDemo = null; }
     });
