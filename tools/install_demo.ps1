@@ -108,7 +108,8 @@ if (-not (Test-Path (Join-Path $server 'ml\models\sign_motion\meta.json'))) {
     if ($whole -eq (Join-Path $Dir 'assets.zip')) { Remove-Item $whole -Force }
 }
 $envFile = Join-Path $server '.env'
-if (-not (Test-Path $envFile)) { Set-Content -Encoding utf8 $envFile "LLM_PROVIDER=claude_code`nCLAUDE_CODE_MODEL=sonnet" }
+# PowerShell 5.1 의 Set-Content -Encoding utf8 은 BOM 을 붙여 첫 키를 깨뜨리므로 BOM 없이 쓴다
+if (-not (Test-Path $envFile)) { [System.IO.File]::WriteAllText($envFile, "LLM_PROVIDER=claude_code`nCLAUDE_CODE_MODEL=sonnet`n", (New-Object System.Text.UTF8Encoding $false)) }
 
 # 바탕화면 바로가기 (다음부터 더블클릭으로 실행)
 $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'handTalk 시작.lnk'
