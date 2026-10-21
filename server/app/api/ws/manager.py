@@ -25,6 +25,8 @@ class ConnectionManager:
         self._avatars: Set[WebSocket] = set()
         self._motion_q: Optional[asyncio.Queue] = None
         self._motion_task: Optional[asyncio.Task] = None
+        # 마지막 학습 목표 — 아바타 화면이 수업 시작보다 늦게 붙어도 시범을 보여 주려고 기억한다
+        self._last_lesson: Optional[dict] = None
 
     async def accept(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -65,16 +67,22 @@ class ConnectionManager:
 
     async def broadcast_avatar(self, data: dict) -> None:
         await self._send_avatars(data)
+        if data.get("type") == "lesson":
+            self._last_lesson = data
         # 튜터 답/학습 목표는 실시간 동작으로도 만들어 보낸다 (순서를 지키려고 한 줄로 처리)
         if data.get("type") in ("llm_response", "lesson") and self._avatars:
             self._ensure_motion_worker()
             self._motion_q.put_nowait(data)
 
     async def send_rest(self, ws: WebSocket) -> None:
-        """새로 붙은 아바타를 쉬는 자세로"""
-        from app.services.avatar.motion_synth import get_synth
+        """새로 붙은 아바타를 지금 수업의 반복 시범으로 (수업이 없으면 쉬는 자세로)"""
+        from app.services.avatar.motion_synth import get_synth, motion_for
         synth = await asyncio.to_thread(get_synth)
-        msg = synth.rest() if synth else None
+        msg = None
+        if self._last_lesson is not None:
+            msg = await asyncio.to_thread(motion_for, self._last_lesson)
+        if msg is None and synth:
+            msg = synth.rest()
         if msg:
             await ws.send_json(msg)
 

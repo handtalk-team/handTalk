@@ -38,12 +38,13 @@ function sampleMotion(m, elapsed, out) {
 }
 
 class MotionPlayer {
-  current = null; previous = null; pending = null;
+  current = null; previous = null; pending = null; base = null;
   start = 0; prevStart = 0;
 
   #finished(m, now, start) { return !m.loop && now - start >= m.duration; }
 
   play(m, now) {
+    if (m.loop) this.base = m;   // 반복 시범·쉬는 자세: 한 번짜리 수어가 끝나면 여기로 돌아온다
     const busy = this.current && !this.current.loop && !this.#finished(this.current, now, this.start);
     if (m.loop && busy) { this.pending = m; return; }   // 시범·쉬는 자세는 지금 수어가 끝난 뒤
     if (!m.loop) this.pending = null;
@@ -53,6 +54,9 @@ class MotionPlayer {
 
   /** 지금 자세 (Unreal 회전, 본 순서는 current.bones) */
   sample(now, out, tmp) {
+    if (!this.pending && this.base && this.current && this.current !== this.base && this.#finished(this.current, now, this.start)) {
+      this.pending = this.base;
+    }
     if (this.pending && (!this.current || this.#finished(this.current, now, this.start))) {
       this.previous = this.current; this.prevStart = this.start;
       this.current = this.pending; this.start = now; this.pending = null;
