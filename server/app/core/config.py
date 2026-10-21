@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8-sig"  # BOM 있는 .env(PowerShell 5.1)도 읽기,
+        env_file_encoding="utf-8-sig",  # BOM 있는 .env(PowerShell 5.1)도 읽기
         case_sensitive=False,
     )
 
