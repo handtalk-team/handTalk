@@ -88,7 +88,12 @@ if (-not (Test-Path (Join-Path $code 'client\vendor\mediapipe\hands\hands.js')))
 }
 
 # 5) 모델·메타휴먼 묶음 (처음이거나, 다운로드 폴더에 새 묶음이 있으면 다시 푼다)
-$parts = Get-ChildItem $Assets -Filter 'handtalk_demo_assets.zip.*' -ErrorAction SilentlyContinue | Sort-Object Name
+# 라이브러리에서 받으면 이름에 날짜가 붙기도 한다 (handtalk_demo_assets.zip-20261022T...-xxxx.001).
+# 조각 번호(확장자)마다 가장 최근에 받은 파일 하나씩만 골라 번호 순으로 합친다.
+$parts = Get-ChildItem $Assets -Filter 'handtalk_demo_assets.zip*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -match '^\.\d{3}$' } |
+    Group-Object Extension | ForEach-Object { $_.Group | Sort-Object LastWriteTime -Descending | Select-Object -First 1 } |
+    Sort-Object { [int]$_.Extension.TrimStart('.') }
 $stamp = Join-Path $server 'ml\models\bundle_stamp.txt'
 $newStamp = if ($parts) { ($parts | ForEach-Object { "$($_.Name) $($_.Length) $($_.LastWriteTimeUtc.Ticks)" }) -join ';' } else { '' }
 $oldStamp = if (Test-Path $stamp) { Get-Content $stamp -Raw } else { '' }
