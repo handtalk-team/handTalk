@@ -9,7 +9,7 @@
 #
 # 5번 묶음(AI Hub 학습 모델, 메타휴먼)은 공개 저장소에 올릴 수 없어서 claude.ai 프로젝트 라이브러리에
 # handtalk_demo_assets.zip.001 ~ .NNN 으로 나눠 올려 두었다. 다운로드 폴더(또는 -Assets 폴더)에 받아 두면
-# 이 스크립트가 합쳐서 푼다. 두 번째 실행부터는 바로 서버만 켠다.
+# 이 스크립트가 합쳐서 푼다. 두 번째 실행부터는 바로 서버만 켠다 (새 묶음을 받아 두면 그것만 다시 푼다).
 # ============================================================
 
 param(
@@ -87,9 +87,14 @@ if (-not (Test-Path (Join-Path $code 'client\vendor\mediapipe\hands\hands.js')))
     & $py (Join-Path $code 'client\tools\fetch_vendor.py')
 }
 
-# 5) 모델·메타휴먼 묶음
-if (-not (Test-Path (Join-Path $server 'ml\models\sign_motion\meta.json'))) {
-    $parts = Get-ChildItem $Assets -Filter 'handtalk_demo_assets.zip.*' -ErrorAction SilentlyContinue | Sort-Object Name
+# 5) 모델·메타휴먼 묶음 (처음이거나, 다운로드 폴더에 새 묶음이 있으면 다시 푼다)
+$parts = Get-ChildItem $Assets -Filter 'handtalk_demo_assets.zip.*' -ErrorAction SilentlyContinue | Sort-Object Name
+$stamp = Join-Path $server 'ml\models\bundle_stamp.txt'
+$newStamp = if ($parts) { ($parts | ForEach-Object { "$($_.Name) $($_.Length) $($_.LastWriteTimeUtc.Ticks)" }) -join ';' } else { '' }
+$oldStamp = if (Test-Path $stamp) { Get-Content $stamp -Raw } else { '' }
+$needAssets = -not (Test-Path (Join-Path $server 'ml\models\sign_motion\meta.json'))
+if ($newStamp -and ($newStamp.Trim() -ne $oldStamp.Trim())) { $needAssets = $true }
+if ($needAssets) {
     $whole = Join-Path $Assets 'handtalk_demo_assets.zip'
     if (-not $parts -and -not (Test-Path $whole)) {
         Write-Host "[5/6] 모델 묶음이 없습니다. claude.ai 프로젝트 라이브러리에서 handtalk_demo_assets.zip.001 ~ 을 모두" -ForegroundColor Red
@@ -106,6 +111,7 @@ if (-not (Test-Path (Join-Path $server 'ml\models\sign_motion\meta.json'))) {
     Write-Host "[5/6] 묶음 풀기"
     Expand-Archive $whole -DestinationPath $code -Force
     if ($whole -eq (Join-Path $Dir 'assets.zip')) { Remove-Item $whole -Force }
+    if ($newStamp) { [System.IO.File]::WriteAllText($stamp, $newStamp) }
 }
 $envFile = Join-Path $server '.env'
 # PowerShell 5.1 의 Set-Content -Encoding utf8 은 BOM 을 붙여 첫 키를 깨뜨리므로 BOM 없이 쓴다
