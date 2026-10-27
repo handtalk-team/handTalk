@@ -3,7 +3,7 @@
  *   왼쪽: AI 선생님(아바타 + 자막 + 글로스)   가운데: 나(카메라 + 실시간 인식)   오른쪽: 목표, 대화 기록, 조작
  */
 import { h, icon, clear, toast } from '../core/dom.js';
-import { state, on, loadSettings } from '../core/store.js';
+import { state, on, loadSettings, saveSettings } from '../core/store.js';
 import { courseTitle, modeTitle } from '../core/api.js';
 import { CameraCapture } from '../core/camera.js';
 import * as session from '../core/session.js';
@@ -92,6 +92,18 @@ export function render(root, { mode = 'word', id = '' }) {
     const confBar = h('i', { style: { width: '0%' } });
     const camWrap = h('div.camera-wrap', video, canvas, camOff, h('div.cam-hud', handsChip, fpsChip), live);
 
+    // 거울 모드: 선생님을 좌우로 뒤집어 보여 준다. 기본은 실제로 마주 본 모습(선생님 오른손이 화면 왼쪽).
+    // 거울 모드에서는 선생님 오른손이 화면 오른쪽에 와서, 거울 보듯 같은 쪽 손으로 따라 하기 쉽다.
+    const applyMirror = (on) => {
+      stage.classList.toggle('mirrored', on);
+      mirrorBtn.toggleAttribute('data-on', on);
+      mirrorBtn.textContent = on ? '거울 모드 켬' : '거울 모드';
+    };
+    const mirrorBtn = h('button.chip.chip-btn', { title: '선생님을 좌우로 뒤집어 거울처럼 보기', onclick: () => {
+      const on = !loadSettings().mirrorTutor;
+      saveSettings({ mirrorTutor: on });
+      applyMirror(on);
+    } }, '거울 모드');
     const target = h('div.target-card');
     const transcript = h('div.transcript');
     let thinking = null;   // 프리토킹: 선생님이 답을 만드는 동안 보이는 말풍선
@@ -109,7 +121,7 @@ export function render(root, { mode = 'word', id = '' }) {
 
     root.append(h('div.studio', { style: { position: 'relative' } },
       h('div.stage-col',
-        h('div.panel-head', h('div.who', h('span.avatar-dot'), 'AI 선생님'), h('span.chip.chip-brand', modeTitle(mode))),
+        h('div.panel-head', h('div.who', h('span.avatar-dot'), 'AI 선생님'), h('div.head-actions', mirrorBtn, h('span.chip.chip-brand', modeTitle(mode)))),
         stage),
       h('div.stage-col',
         h('div.panel-head', h('div.who', h('span.me-dot'), loadSettings().name || '나'), h('span.chip', title)),
@@ -117,6 +129,7 @@ export function render(root, { mode = 'word', id = '' }) {
         h('div.signal', h('div.meter', h('span', '손 인식 신뢰도'), h('div.progress', confBar)))),
       h('aside.side', target, transcript, compose)));
 
+    applyMirror(!!loadSettings().mirrorTutor);
     createAvatarStage(stage, {
       onClip: (clip) => glossRow.querySelectorAll('.gloss').forEach((g) => g.toggleAttribute('data-active', g.dataset.clip === clip && !!clip)),
     }).then((a) => {

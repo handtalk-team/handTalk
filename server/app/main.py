@@ -56,6 +56,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 웹앱 파일은 매번 최신을 확인하게 (고친 화면이 브라우저 캐시 때문에 안 바뀌어 보이던 문제)
+@app.middleware("http")
+async def no_cache_app(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/app") and not request.url.path.endswith((".glb", ".wasm", ".tflite", ".data", ".woff2")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 # ── REST routers ──────────────────────────────────────────────────
 app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(feedback_router, prefix="/api/v1")

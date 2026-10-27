@@ -192,6 +192,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 5px; border-radius
 
 .avatar-stage { position: relative; flex: 1; min-height: 0; background: var(--stage-bg); }
 .avatar-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.avatar-stage.mirrored canvas { transform: scaleX(-1); }
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.chip-btn { cursor: pointer; border: 1px solid var(--line); background: transparent; font: inherit; }
+.chip-btn[data-on] { background: var(--brand-600); color: var(--on-brand); border-color: transparent; }
 .stage-caption {
   position: absolute; left: 16px; right: 16px; bottom: 16px;
   display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; pointer-events: none;
