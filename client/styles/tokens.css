@@ -1,44 +1,45 @@
 /* handTalk 디자인 토큰
-   방향: 차분한 청록(신뢰, 의료/교육) + 따뜻한 살구색 강조(손, 사람). 정보 밀도 높은 학습 화면을 위해
-   중립색은 청록 쪽으로 살짝 기운 회색을 쓴다. */
+   방향: 잡지·금융 앱처럼 차분한 무채색 바탕에 잉크색 글자, 브랜드색(짙은 청록)은 '지금 할 일' 한 곳에만.
+   그라데이션, 형광 강조, 알약 장식을 쓰지 않는다. 깊이는 그림자 대신 선과 면의 명도 차이로 만든다. */
 :root {
-  --brand-50:  #ecf8f6;
-  --brand-100: #cfeee9;
-  --brand-300: #6fcbbf;
-  --brand-500: #13968a;
-  --brand-600: #0d7c72;
-  --brand-700: #0b635c;
-  --accent-400: #f6a26b;
-  --accent-500: #ee8546;
+  --ink: #15191a;            /* 주 글자, 주 버튼 */
+  --brand-50:  #eef5f3;
+  --brand-100: #d7e8e3;
+  --brand-300: #7fb5a8;
+  --brand-500: #1f6f62;
+  --brand-600: #175c51;
+  --brand-700: #114a41;
+  --accent-400: #e9a27a;
+  --accent-500: #d9824f;
 
-  --bg: #f4f7f7;
+  --bg: #f5f5f2;
   --surface: #ffffff;
-  --surface-2: #f8fbfa;
-  --surface-sunken: #eef3f2;
-  --line: #dde6e4;
-  --line-strong: #c7d3d1;
-  --fg: #13201f;
-  --fg-2: #3e504e;
-  --fg-3: #6b7d7b;
+  --surface-2: #fafaf8;
+  --surface-sunken: #f0f0ec;
+  --line: #e4e4df;
+  --line-strong: #d2d2cb;
+  --fg: #15191a;
+  --fg-2: #464c4d;
+  --fg-3: #80878a;
   --on-brand: #ffffff;
-  --brand-ink: #0b635c;      /* 옅은 브랜드 배경 위 글자 */
+  --brand-ink: #175c51;
 
-  --ok: #1f9d55;
-  --ok-bg: #e6f6ec;
-  --warn: #b7791f;
-  --warn-bg: #fdf3e1;
-  --err: #d64545;
-  --err-bg: #fdecec;
-  --info-bg: #e8f1fb;
+  --ok: #1d7a4b;
+  --ok-bg: #e8f3ec;
+  --warn: #9a6512;
+  --warn-bg: #faf1e1;
+  --err: #c43d3d;
+  --err-bg: #fbecec;
+  --info-bg: #edf2f8;
 
-  --stage-bg: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e9f2f1 60%, #dde9e7 100%);
-  --camera-bg: #0f1717;
+  --stage-bg: #e9ebe8;
+  --camera-bg: #121515;
 
-  --radius-s: 8px;
-  --radius-m: 12px;
-  --radius-l: 18px;
-  --shadow-1: 0 1px 2px rgba(16, 40, 38, .06), 0 1px 1px rgba(16, 40, 38, .04);
-  --shadow-2: 0 8px 24px rgba(16, 40, 38, .08), 0 2px 6px rgba(16, 40, 38, .05);
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+  --shadow-1: none;
+  --shadow-2: 0 12px 32px rgba(20, 24, 25, .10), 0 2px 6px rgba(20, 24, 25, .06);
 
   --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
@@ -47,58 +48,64 @@
   --fs-s: 13px;
   --fs-m: 15px;
   --fs-l: 18px;
-  --fs-xl: 24px;
-  --fs-2xl: 32px;
-  --fs-hero: 44px;
+  --fs-xl: 26px;
+  --fs-2xl: 34px;
+  --fs-hero: 52px;
 
-  --sidebar-w: 248px;
-  --topbar-h: 60px;
+  --sidebar-w: 232px;
+  --topbar-h: 56px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0c1312;
-    --surface: #121c1b;
-    --surface-2: #162221;
-    --surface-sunken: #0f1817;
-    --line: #22302f;
-    --line-strong: #2e3e3c;
-    --fg: #e7efee;
-    --fg-2: #b4c4c2;
-    --fg-3: #7f9391;
-    --brand-50: #10302c;
-    --brand-100: #154039;
-    --brand-ink: #6fcbbf;
-    --ok-bg: #11291c;
-    --warn-bg: #2c2210;
-    --err-bg: #2e1515;
-    --info-bg: #13243a;
-    --stage-bg: radial-gradient(120% 90% at 50% 0%, #1b2a28 0%, #121c1b 70%);
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
-    --shadow-2: 0 8px 24px rgba(0, 0, 0, .35);
+    --ink: #f1f2ef;
+    --bg: #111313;
+    --surface: #171a1a;
+    --surface-2: #1b1e1e;
+    --surface-sunken: #1f2323;
+    --line: #2a2e2e;
+    --line-strong: #383d3d;
+    --fg: #eceeeb;
+    --fg-2: #b5bab8;
+    --fg-3: #858b8a;
+    --brand-50: #16302b;
+    --brand-100: #1d3f38;
+    --brand-500: #4fa392;
+    --brand-600: #3f8d7d;
+    --brand-ink: #8cc7b9;
+    --on-brand: #ffffff;
+    --ok-bg: #132a1e;
+    --warn-bg: #2c2311;
+    --err-bg: #2e1616;
+    --info-bg: #15202c;
+    --stage-bg: #1d2120;
+    --shadow-2: 0 12px 32px rgba(0, 0, 0, .45);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0c1312;
-  --surface: #121c1b;
-  --surface-2: #162221;
-  --surface-sunken: #0f1817;
-  --line: #22302f;
-  --line-strong: #2e3e3c;
-  --fg: #e7efee;
-  --fg-2: #b4c4c2;
-  --fg-3: #7f9391;
-  --brand-50: #10302c;
-  --brand-100: #154039;
-  --brand-ink: #6fcbbf;
-  --ok-bg: #11291c;
-  --warn-bg: #2c2210;
-  --err-bg: #2e1515;
-  --info-bg: #13243a;
-  --stage-bg: radial-gradient(120% 90% at 50% 0%, #1b2a28 0%, #121c1b 70%);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
-  --shadow-2: 0 8px 24px rgba(0, 0, 0, .35);
+  --ink: #f1f2ef;
+  --bg: #111313;
+  --surface: #171a1a;
+  --surface-2: #1b1e1e;
+  --surface-sunken: #1f2323;
+  --line: #2a2e2e;
+  --line-strong: #383d3d;
+  --fg: #eceeeb;
+  --fg-2: #b5bab8;
+  --fg-3: #858b8a;
+  --brand-50: #16302b;
+  --brand-100: #1d3f38;
+  --brand-500: #4fa392;
+  --brand-600: #3f8d7d;
+  --brand-ink: #8cc7b9;
+  --on-brand: #ffffff;
+  --ok-bg: #132a1e;
+  --warn-bg: #2c2311;
+  --err-bg: #2e1616;
+  --info-bg: #15202c;
+  --stage-bg: #1d2120;
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, .45);
   color-scheme: dark;
 }

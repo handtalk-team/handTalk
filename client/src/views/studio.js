@@ -36,7 +36,7 @@ export function render(root, { mode = 'word', id = '' }) {
     const items = {
       server: h('div.check', h('span.s', icon('server', 12)), '학습 서버 연결'),
       camera: h('div.check', h('span.s', icon('camera', 12)), '카메라 사용 권한 (시작할 때 요청해요)'),
-      avatar: h('div.check', h('span.s', icon('check', 12)), '3D 아바타 준비'),
+      avatar: h('div.check', h('span.s', icon('check', 12)), 'AI 선생님 준비'),
     };
     const startBtn = h('button.btn.btn-primary.btn-lg', { onclick: start }, icon('play'), '수업 시작');
     const refresh = () => {
