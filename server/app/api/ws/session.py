@@ -291,12 +291,20 @@ class SessionHandler:
             sentence_only = self._tutor.wants_sentence_only(self._sentence.vocab)
             ff = getattr(self._engine, "last_fused", None)
             if ff is not None:
-                gloss = self._sentence.push(ff.fused_features, bool(np.abs(ff.vision_features).sum() > 0))
+                gloss = self._sentence.push(ff.fused_features, bool(np.abs(ff.vision_features).sum() > 0),
+                                            timestamp=ff.timestamp, allowed=self._tutor.allowed_glosses())
                 if gloss:
                     await self._send(RecognitionResult(text=" ".join(gloss), confidence=1.0,
                                                        modality_weights=ModalityWeights(vision=1.0, glove=0.0)))
                     for out in await self._tutor.on_sentence(gloss):
                         await self._send(out)
+
+        # 연습 중인 목표 단어가 상위 후보 안에 있으면 그 단어로 본다 (웹캠 입력은 학습 데이터와 달라 1등이 자주 빗나감)
+        if result and self._tutor and not result.is_partial:
+            exp = self._tutor.expected_gloss()
+            if exp and exp != result.text and exp in result.candidates[:settings.TARGET_TOPK]:
+                logger.info("target '%s' in top-%d (1st '%s') -> accepted", exp, settings.TARGET_TOPK, result.text)
+                result.text = exp
 
         if result and not self._recording:
             await self._send(result)

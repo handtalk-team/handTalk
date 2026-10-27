@@ -82,6 +82,14 @@ class BaseTutor:
         """True 면 단어 인식 결과는 튜터에 넘기지 않는다 (문장 모델이 목표를 다 알 때)"""
         return False
 
+    def expected_gloss(self) -> Optional[str]:
+        """지금 사용자가 해야 할 단어 (단어 연습·상황 문장). 인식 후보 안에 있으면 맞힌 것으로 본다."""
+        return None
+
+    def allowed_glosses(self) -> Optional[set]:
+        """문장 인식 때 고를 수 있는 단어를 이 상황의 단어로 좁힌다 (None 이면 전체)"""
+        return None
+
     async def on_sign(self, result: RecognitionResult) -> list:
         return []
 
@@ -122,6 +130,9 @@ class WordTutor(BaseTutor):
             target=LessonTarget(gloss=[w], text=w, description=cur.KSL_DESCRIPTIONS.get(w),
                                 clips=_clips([w])),
         )
+
+    def expected_gloss(self) -> Optional[str]:
+        return self.target
 
     async def opening(self) -> list:
         w = self.target
@@ -199,6 +210,13 @@ class SentenceTutor(BaseTutor):
 
     def wants_sentence_only(self, vocab: set) -> bool:
         return all(g in vocab for g in self.cur_turn["gloss"])
+
+    def expected_gloss(self) -> Optional[str]:
+        g = self.cur_turn["gloss"]
+        return g[self.matched] if self.matched < len(g) else None
+
+    def allowed_glosses(self) -> Optional[set]:
+        return {g for turn in self.sc["turns"] for g in turn["gloss"]}
 
     async def on_sentence(self, gloss: List[str]) -> list:
         t = self.cur_turn

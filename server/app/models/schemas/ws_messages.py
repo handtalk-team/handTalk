@@ -64,6 +64,8 @@ class RecognitionResult(BaseModel):
     modality_weights: ModalityWeights
     # True while the gesture window is still accumulating
     is_partial: bool = False
+    # 확률 높은 순 후보 단어 (연습 중인 목표가 이 안에 있으면 맞힌 것으로 본다)
+    candidates: List[str] = []
 
 
 class AvatarCommand(BaseModel):

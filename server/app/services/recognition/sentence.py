@@ -57,15 +57,18 @@ class SentenceRecognizer:
 
     def reset(self) -> None:
         self.frames: List[np.ndarray] = []
+        self.times: List[float] = []
         self.active = False
         self.last_motion = 0.0
         self.prev: Optional[np.ndarray] = None
 
-    def push(self, features: np.ndarray, hands_visible: bool) -> Optional[List[str]]:
+    def push(self, features: np.ndarray, hands_visible: bool, timestamp: Optional[float] = None,
+             allowed: Optional[set] = None) -> Optional[List[str]]:
         """프레임 하나(136 피처). 문장이 끝났다고 보이면 인식한 글로스 목록을 돌려준다."""
         if not self.available:
             return None
         now = time.time()
+        ts = timestamp if timestamp is not None else now
         f = np.asarray(features, dtype=np.float32)
         motion = float(np.abs(f - self.prev).mean()) if self.prev is not None else 0.0
         self.prev = f
@@ -74,24 +77,37 @@ class SentenceRecognizer:
             if not self.active:
                 self.active = True
                 self.frames = []
+                self.times = []
         if not self.active:
             return None
         self.frames.append(f)
+        self.times.append(ts)
         ended = now - self.last_motion > self.END_STILL_S or len(self.frames) >= self.MAX_FRAMES
         if not ended:
             return None
-        frames, self.frames, self.active = self.frames, [], False
+        frames, times, self.frames, self.active = self.frames, self.times, [], False
         if len(frames) < self.MIN_FRAMES:
             return None
-        return self.decode(np.stack(frames))
+        return self.decode(np.stack(frames), np.asarray(times, dtype=np.float64), allowed)
 
-    def decode(self, frames: np.ndarray) -> List[str]:
-        """frames: (T, 136) 30fps → 글로스 순서"""
-        pos = frames[::2]                                     # 15fps
+    def decode(self, frames: np.ndarray, times: Optional[np.ndarray] = None, allowed: Optional[set] = None) -> List[str]:
+        """frames: (T, 136) → 글로스 순서. times 가 있으면 실제 프레임 시각으로 15fps 에 맞춘다 (없으면 30fps 로 보고 2개에 1개).
+        allowed 가 있으면 그 단어들만 고른다 (상황 문장: 그 상황의 단어로 좁혀 웹캠 오인식을 줄임)."""
+        if times is not None and len(times) == len(frames) and times[-1] > times[0]:
+            t15 = np.arange(times[0], times[-1], 1 / 15.0)
+            idx = np.clip(np.searchsorted(times, t15), 1, len(times) - 1)
+            a, b = times[idx - 1], times[idx]
+            w = ((t15 - a) / np.maximum(b - a, 1e-6))[:, None].astype(np.float32)
+            pos = frames[idx - 1] * (1 - w) + frames[idx] * w
+        else:
+            pos = frames[::2]                                 # 15fps
         vel = np.zeros_like(pos)
         vel[1:] = pos[1:] - pos[:-1]
         x = np.concatenate([pos, vel], axis=1)[None].astype(np.float32)
         logits = self.session.run(None, {"input": x})[0][0]
+        if allowed:
+            keep = np.array([i == 0 or self.glosses[i] in allowed for i in range(logits.shape[-1])])
+            logits = np.where(keep[None, :], logits, -1e9)
         best = logits.argmax(-1)
         out, prev = [], -1
         for i in best:
@@ -100,4 +116,5 @@ class SentenceRecognizer:
                 if g:
                     out.append(g)
             prev = i
+        logger.info("sentence: %s%s", " ".join(out) or "(없음)", f"  (후보 {len(allowed)}개로 좁힘)" if allowed else "")
         return out

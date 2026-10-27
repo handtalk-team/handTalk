@@ -163,9 +163,9 @@ class HybridRecognitionEngine:
     def _infer(self, partial: bool, ff: FusedFrame) -> Optional[RecognitionResult]:
         window = self._fusion.get_window_array()
 
-        result: Optional[Tuple[str, float]] = None
+        result: Optional[tuple] = None
         if window is not None and self._onnx_session is not None:
-            result = self._onnx_infer(window)
+            result = self._onnx_infer(self._to_30fps(window))
         elif window is not None:
             # ONNX 모델이 없으면 카메라 손 모양 규칙으로 폴백
             # (flex는 카메라로 합성될 수 있어 글러브 규칙은 쓰지 않음)
@@ -174,7 +174,8 @@ class HybridRecognitionEngine:
         if result is None:
             return None
 
-        label, confidence = result
+        label, confidence = result[0], result[1]
+        candidates = result[2] if len(result) > 2 else [label]
         total = ff.vision_weight + ff.glove_weight + 1e-9
         return RecognitionResult(
             text=label,
@@ -184,6 +185,7 @@ class HybridRecognitionEngine:
                 glove=round(ff.glove_weight / total, 3),
             ),
             is_partial=partial,
+            candidates=candidates,
         )
 
     def _vision_infer(self, window: np.ndarray) -> Optional[Tuple[str, float]]:
@@ -240,6 +242,30 @@ class HybridRecognitionEngine:
             return "브이", 0.68
         return None
 
+    def _to_30fps(self, window: np.ndarray) -> np.ndarray:
+        """웹캠은 PC 마다 15~30fps 로 들어온다. 모델은 30fps 로 학습했으므로 프레임 시각으로 30fps 에 맞춰 다시 뽑는다
+        (느린 PC 에서 같은 동작이 2배 빠른 동작처럼 보이던 문제)."""
+        ts = np.array([f.timestamp for f in self._fusion._window], dtype=np.float64)
+        if len(ts) != len(window) or len(ts) < 2 or ts[-1] - ts[0] <= 0:
+            return window
+        fps = (len(ts) - 1) / (ts[-1] - ts[0])
+        if abs(fps - 30) < 3:
+            return window
+        pos = window[:, :window.shape[1] // 2]
+        t30 = np.arange(ts[0], ts[-1], 1 / 30.0)
+        idx = np.clip(np.searchsorted(ts, t30) , 1, len(ts) - 1)
+        a, b = ts[idx - 1], ts[idx]
+        w = ((t30 - a) / np.maximum(b - a, 1e-6))[:, None].astype(np.float32)
+        res = pos[idx - 1] * (1 - w) + pos[idx] * w
+        vel = np.zeros_like(res)
+        vel[1:] = res[1:] - res[:-1]
+        if len(res) > 60:   # 가운데 2초
+            s = (len(res) - 60) // 2
+            res, vel = res[s:s + 60], vel[s:s + 60]
+            vel[0] = 0
+        logger.debug("resampled %.1ffps -> 30fps (%d frames)", fps, len(res))
+        return np.concatenate([res, vel], axis=1)
+
     def _onnx_infer(self, window: np.ndarray) -> Tuple[str, float]:
         # 모델 입력 차원을 ONNX 메타데이터에서 동적으로 읽어 처리
         expected_dim = self._onnx_session.get_inputs()[0].shape[2]  # (batch, T, D) → D
@@ -261,8 +287,11 @@ class HybridRecognitionEngine:
         try:
             logits = self._onnx_session.run(None, {"input": inp})[0][0]
             probs = self._softmax(logits)
-            idx = int(np.argmax(probs))
-            return SIGN_VOCAB.get(idx, "?"), float(probs[idx])
+            order = np.argsort(-probs)[:10]
+            idx = int(order[0])
+            cands = [SIGN_VOCAB.get(int(i), "?") for i in order]
+            logger.info("word top5: %s", ", ".join(f"{SIGN_VOCAB.get(int(i), '?')} {probs[i]:.2f}" for i in order[:5]))
+            return SIGN_VOCAB.get(idx, "?"), float(probs[idx]), cands
         except Exception as e:
             logger.warning("ONNX inference failed: %s", e)
             return None
