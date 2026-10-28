@@ -34,6 +34,7 @@ import sign_retarget as sr  # noqa: E402  (언리얼 없이도 도는 순수 파
 REF_POSE = os.environ.get("HANDTALK_REF_POSE", os.path.join(_ROOT, "client", "assets", "avatar", "ref_pose.json"))
 MODEL_DIR = os.environ.get("HANDTALK_SIGN_MODEL") or local_or("sign_motion", r"C:\handtalk\models\sign_motion")
 FPS = 30.0
+DEMO_SPEED = float(os.environ.get("HANDTALK_DEMO_SPEED", "0.75"))
 EDGE = 8   # 쉬는 자세 ↔ 문장 처음/끝을 잇는 프레임
 
 JOINTS = ["neck", "r_shoulder", "r_elbow", "r_wrist", "l_shoulder", "l_elbow", "l_wrist", "mid_hip", "nose"] \
@@ -130,8 +131,9 @@ class MotionSynth:
     def knows(self, gloss: str) -> bool:
         return self.model.knows(gloss)
 
-    def from_gloss(self, gloss: Sequence[str], loop: bool = False, loop_gap: float = 0.0) -> Optional[dict]:
-        kp = self.model.generate(gloss)
+    def from_gloss(self, gloss: Sequence[str], loop: bool = False, loop_gap: float = 0.0,
+                   speed: float = 1.0) -> Optional[dict]:
+        kp = self.model.generate(gloss, speed=speed)
         if kp is None:
             return None
         if self.rest_kp is not None:
@@ -203,7 +205,8 @@ def motion_for(data: dict) -> Optional[dict]:
         target = data.get("target") or {}
         gloss = [] if data.get("done") else [g for g in target.get("gloss") or [] if synth.knows(g)]
         # 연습 중인 목표 문장은 쉬었다가 반복. 목표가 없으면 쉬는 자세로
-        msg = synth.from_gloss(gloss, loop=True, loop_gap=1.8) if gloss else synth.rest()
+        # 따라 하라고 보여 주는 시범은 조금 천천히 (손이 닿는 짧은 순간도 내장 그래픽에서 보이게)
+        msg = synth.from_gloss(gloss, loop=True, loop_gap=1.8, speed=DEMO_SPEED) if gloss else synth.rest()
         if msg and gloss:
             msg["nms"] = non_manual(target.get("text", ""), gloss)
         return msg
