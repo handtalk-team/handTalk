@@ -18,15 +18,20 @@ param(
     [string]$Branch = 'feature/tutor-app',
     [switch]$Glove,
     [string]$GlovePort = '',
-    [switch]$Update          # 코드를 GitHub 최신으로 다시 받기
+    [switch]$Update,         # 코드를 GitHub 최신으로 다시 받기
+    [switch]$NoRun           # 설치만 하고 서버는 켜지 않기 (점검용)
 )
 
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force $Dir | Out-Null
 # 바로가기가 다운로드 폴더가 아닌 설치 폴더의 스크립트를 가리키게 복사해 둔다
 $self = Join-Path $Dir 'install_demo.ps1'
-if ($PSCommandPath -and ($PSCommandPath -ne $self)) { Copy-Item $PSCommandPath $self -Force }
-$code   = Join-Path $Dir 'handTalk'
+# 코드와 모델이 함께 든 비공개 저장소에서 실행하면 (tools/ 아래) 받지 않고 그 폴더를 그대로 쓴다
+$repo = if ($PSCommandPath) { Split-Path (Split-Path $PSCommandPath) } else { '' }
+$inRepo = $repo -and (Test-Path (Join-Path $repo 'serverequirements.txt'))
+if ($inRepo) { $self = $PSCommandPath }
+elseif ($PSCommandPath -and ($PSCommandPath -ne $self)) { Copy-Item $PSCommandPath $self -Force }
+$code   = if ($inRepo) { $repo } else { Join-Path $Dir 'handTalk' }
 $server = Join-Path $code 'server'
 $venv   = Join-Path $Dir '.venv'
 $py     = Join-Path $venv 'Scripts\python.exe'
@@ -52,7 +57,7 @@ if (-not (Test-Path $py)) {
 }
 
 # 2) 코드
-if ($Update -and (Test-Path $code)) {
+if ($Update -and -not $inRepo -and (Test-Path $code)) {
     # 모델·메타휴먼·라이브러리는 저장소 밖 파일이라 옮겨 두었다가 다시 넣는다
     $keep = @('server\ml\models', 'client\assets\avatar', 'client\assets\lexicon.json', 'client\vendor', 'server\.env')
     $tmpKeep = Join-Path $Dir '_keep'
@@ -98,7 +103,7 @@ $stamp = Join-Path $server 'ml\models\bundle_stamp.txt'
 $newStamp = if ($parts) { ($parts | ForEach-Object { "$($_.Name) $($_.Length) $($_.LastWriteTimeUtc.Ticks)" }) -join ';' } else { '' }
 $oldStamp = if (Test-Path $stamp) { Get-Content $stamp -Raw } else { '' }
 $needAssets = -not (Test-Path (Join-Path $server 'ml\models\sign_motion\meta.json'))
-if ($newStamp -and ($newStamp.Trim() -ne $oldStamp.Trim())) { $needAssets = $true }
+if (-not $inRepo -and $newStamp -and ($newStamp.Trim() -ne $oldStamp.Trim())) { $needAssets = $true }
 if ($needAssets) {
     $whole = Join-Path $Assets 'handtalk_demo_assets.zip'
     if (-not $parts -and -not (Test-Path $whole)) {
@@ -138,6 +143,8 @@ if ($Glove -and -not $GlovePort) {
     if ($ports.Count -ge 1) { $GlovePort = $ports[-1] }
 }
 $env:GLOVE_PORT_RIGHT = $GlovePort
+
+if ($NoRun) { Write-Host "설치 완료 (-NoRun: 서버는 켜지 않음)" -ForegroundColor Green; exit 0 }
 
 # 6) 실행
 Write-Host "[6/6] 서버 시작 — 브라우저가 http://localhost:8000/app/ 로 열립니다 (종료: 이 창 닫기)" -ForegroundColor Green
