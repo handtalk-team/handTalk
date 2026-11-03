@@ -5,3 +5,4 @@ models/labels.txt
 models/glosses.json
 models/sign_motion/
 models/ksl_sentences.json
+models/handshapes.json

@@ -23,7 +23,7 @@ import numpy as np
 
 from app.core.config import local_or
 
-from app.services.avatar import arm_ik, hand_limits
+from app.services.avatar import arm_ik, hand_limits, handshape
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,7 @@ class MotionSynth:
         self.bones = [m[0] for m in self.retargeter.map]
         rt = self.retargeter
         self.arm_ik = arm_ik.ArmIK(ref["pos"], rt.right, rt.fwd, rt.up)
+        self.shaper = handshape.HandShaper()
         self.model = ModelGenerator()
         logger.info("수어 동작 생성 모델: %d 단어", len(self.model.vocab))
         # 쉬는 자세: 학습 때 meta 에 저장한 '손을 내린 자세' (단어 영상 첫 프레임들의 중앙값, 좌우 대칭)
@@ -138,6 +139,7 @@ class MotionSynth:
         kp = self.model.generate(gloss, speed=speed)
         if kp is None:
             return None
+        kp = self.shaper.apply(kp, JOINTS, gloss)   # 단어 시범: 사전 설명의 손 모양으로 손가락 보정
         if self.rest_kp is not None:
             r = self.rest_kp
             kp = np.concatenate([r[None], _bridge(r, kp[0], EDGE), kp, _bridge(kp[-1], r, EDGE), r[None]])
