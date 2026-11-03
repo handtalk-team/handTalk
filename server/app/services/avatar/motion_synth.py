@@ -100,6 +100,10 @@ class ModelGenerator:
         L = dur[idx].astype(np.float32)
         phase = np.stack([(within + 0.5) / L, L / 30.0], -1)[None].astype(np.float32)
         out = self.dec.run(None, {"frames": hidden[:, idx], "phase": phase, "signer": signer})[0][0]
+        # 글로스마다 (시작, 끝) 프레임 (30fps 기준): 손 모양 보정이 단어별로 쓴다
+        r = FPS / self.fps
+        word_tok = [i for i, t in enumerate(toks) if t > 3]
+        self.last_spans = [(int(round(starts[i] * r)), int(round((starts[i] + dur[i]) * r))) for i in word_tok]
         kp = np.zeros((len(out), len(JOINTS), 3), dtype=np.float32)
         for j, n in enumerate(self.joints):
             kp[:, JOINTS.index(n)] = out[:, j]
@@ -139,7 +143,8 @@ class MotionSynth:
         kp = self.model.generate(gloss, speed=speed)
         if kp is None:
             return None
-        kp = self.shaper.apply(kp, JOINTS, gloss)   # 단어 시범: 사전 설명의 손 모양으로 손가락 보정
+        known = [g for g in gloss if self.model.knows(g)]
+        kp = self.shaper.apply(kp, JOINTS, known, self.model.last_spans)   # 손가락을 단어별 사전 손 모양으로
         if self.rest_kp is not None:
             r = self.rest_kp
             kp = np.concatenate([r[None], _bridge(r, kp[0], EDGE), kp, _bridge(kp[-1], r, EDGE), r[None]])
