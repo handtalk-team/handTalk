@@ -68,6 +68,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--max-sentences", type=int, default=0, help="문장 샘플 수 제한 (이어서 학습할 때 빠르게)")
+    ap.add_argument("--focus", default="", help="쉼표로 구분한 단어: 이 단어들은 --focus-repeat 번 더 넣음")
+    ap.add_argument("--focus-repeat", type=int, default=0)
     ap.add_argument("--word-repeat", type=int, default=1, help="단어 샘플을 몇 번 넣을지")
     ap.add_argument("--init", default=None, help="이 폴더의 best.pt 에서 이어서 학습 (단어 목록 그대로)")
     ap.add_argument("--val-signers", default="", help="검증용으로 뺄 수어자 (예: REAL17,REAL18)")
@@ -98,6 +100,12 @@ def main() -> None:
         print(f"words {len(wd)}")
         # 단어는 단어마다 영상이 하나뿐이라 문장(수만 개)에 묻힌다. 여러 번 넣어 단어 동작을 정확히 배우게 한다.
         samples += wd * max(args.word_repeat, 1)
+        # 단어 연습에 나오는 단어처럼 시범이 정확해야 하는 단어는 더 많이 넣는다
+        focus = {g for g in args.focus.split(",") if g}
+        if focus:
+            fw = [s for s in wd if s.glosses[0] in focus]
+            print(f"focus words {len(fw)} x{args.focus_repeat}")
+            samples += fw * max(args.focus_repeat, 0)
     samples = [s for s in samples if 8 <= len(s.motion) <= 300]
     if args.init:
         # 이어서 학습: 단어 id·수어자 id 를 기존 모델과 똑같이 쓴다
