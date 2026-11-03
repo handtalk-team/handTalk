@@ -49,6 +49,7 @@ class SentenceRecognizer:
                 logger.warning("문장 인식 모델을 못 읽음 (%s)", e)
                 self.session = None
         self.vocab = set(g for g in self.glosses[1:] if g)
+        self.last_confidence = 0.0
         self.reset()
 
     @property
@@ -109,12 +110,22 @@ class SentenceRecognizer:
             keep = np.array([i == 0 or self.glosses[i] in allowed for i in range(logits.shape[-1])])
             logits = np.where(keep[None, :], logits, -1e9)
         best = logits.argmax(-1)
-        out, prev = [], -1
-        for i in best:
-            if i != prev and i != 0:
-                g = self.glosses[i] if i < len(self.glosses) else ""
-                if g:
-                    out.append(g)
+        z = logits - logits.max(-1, keepdims=True)
+        probs = np.exp(z) / np.exp(z).sum(-1, keepdims=True)
+        out, prev, peaks = [], -1, []
+        for t, i in enumerate(best):
+            if i != 0:
+                p = float(probs[t, i])
+                if i != prev:
+                    g = self.glosses[i] if i < len(self.glosses) else ""
+                    if g:
+                        out.append(g)
+                        peaks.append(p)
+                elif peaks:
+                    peaks[-1] = max(peaks[-1], p)
             prev = i
-        logger.info("sentence: %s%s", " ".join(out) or "(없음)", f"  (후보 {len(allowed)}개로 좁힘)" if allowed else "")
+        # 단어마다 가장 확실했던 순간의 확률 평균 — 손을 그냥 움직였을 때 엉뚱한 문장을 거르는 데 쓴다
+        self.last_confidence = float(np.mean(peaks)) if peaks else 0.0
+        logger.info("sentence: %s  (확신 %.2f)%s", " ".join(out) or "(없음)", self.last_confidence,
+                    f"  (후보 {len(allowed)}개로 좁힘)" if allowed else "")
         return out

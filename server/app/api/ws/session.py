@@ -293,6 +293,12 @@ class SessionHandler:
             if ff is not None:
                 gloss = self._sentence.push(ff.fused_features, bool(np.abs(ff.vision_features).sum() > 0),
                                             timestamp=ff.timestamp, allowed=self._tutor.allowed_glosses())
+                if gloss and self._mode == "free_talk" and (
+                        self._sentence.last_confidence < settings.FREE_TALK_SENTENCE_MIN_CONF
+                        or not self._tutor.listening()):
+                    logger.info("free_talk: '%s' 무시 (확신 %.2f, 듣는 중=%s)", " ".join(gloss),
+                                self._sentence.last_confidence, self._tutor.listening())
+                    gloss = None
                 if gloss:
                     await self._send(RecognitionResult(text=" ".join(gloss), confidence=1.0,
                                                        modality_weights=ModalityWeights(vision=1.0, glove=0.0)))

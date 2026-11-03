@@ -26,12 +26,14 @@ from app.models.schemas.ws_messages import (
     RecognitionResult,
     Utterance,
 )
+from app.core.config import get_settings
 from app.services.avatar.controller import AvatarController
 from app.services.tutor import curriculum as cur
 from app.services.tutor import ksl_grammar as ksl
 from app.services.tutor.llm import LLMClient, is_korean_only
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 PRAISE = ["정확해요!", "잘하셨어요!", "훌륭해요!", "완벽해요!", "아주 자연스러워요!", "멋지게 해내셨어요!"]
 
@@ -303,6 +305,11 @@ class FreeTalkTutor(BaseTutor):
         self.last_sign_t = 0.0
         self.history: List[dict] = []
         self.turns = 0
+        # 선생님이 답을 생각하거나 수어로 답하는 동안은 사용자 입력을 받지 않는다 (번갈아 말하기)
+        self.busy_until = 0.0
+
+    def listening(self) -> bool:
+        return time.monotonic() >= self.busy_until
 
     def _state(self) -> LessonState:
         return LessonState(mode=self.mode, title=self.topic["title"], step=self.turns, total=0,
@@ -315,6 +322,8 @@ class FreeTalkTutor(BaseTutor):
         return [self._state(), _reply(opener, "prompt", ["좋다"])]
 
     async def on_sign(self, result: RecognitionResult) -> list:
+        if not self.listening() or result.confidence < settings.FREE_TALK_WORD_MIN_CONF:
+            return []
         self.attempts += 1
         if not self.buffer or self.buffer[-1] != result.text:
             self.buffer.append(result.text)
@@ -323,14 +332,14 @@ class FreeTalkTutor(BaseTutor):
 
     async def on_sentence(self, gloss: List[str]) -> list:
         # 문장 모델이 한 문장을 통째로 읽었으면 단어 인식으로 모은 것 대신 그걸로 바로 답한다
-        if not gloss:
+        if not gloss or not self.listening():
             return []
         self.attempts += 1
         self.buffer = list(gloss)
         return await self._respond()
 
     async def tick(self) -> list:
-        if self.buffer and time.monotonic() - self.last_sign_t > PAUSE_TO_SEND_S:
+        if self.buffer and self.listening() and time.monotonic() - self.last_sign_t > PAUSE_TO_SEND_S:
             return await self._respond()
         return []
 
@@ -348,6 +357,7 @@ class FreeTalkTutor(BaseTutor):
     async def _respond(self) -> list:
         said = list(self.buffer)
         self.buffer = []
+        self.busy_until = time.monotonic() + 60.0   # 답이 올 때까지 (답이 오면 수어 길이만큼으로 다시 정함)
         self.turns += 1
         self.correct += 1
         self.history.append({"role": "user", "content": " ".join(said)})
@@ -358,9 +368,16 @@ class FreeTalkTutor(BaseTutor):
         return [Utterance(gloss=said, final=True)] + await self._answer()
 
     async def _answer(self) -> list:
-        reply, gloss = await self._ask_llm()
+        try:
+            reply, gloss = await self._ask_llm()
+        except Exception:
+            self.busy_until = 0.0
+            raise
         self.history.append({"role": "assistant", "content": reply})
         self.history = self.history[-12:]
+        # 선생님이 수어로 답하는 동안 + 사용자가 읽을 여유 (단어당 약 1.3초)
+        self.busy_until = time.monotonic() + min(12.0, 2.0 + 1.3 * len(gloss))
+        self.buffer = []
         return [self._state(), _reply(reply, "reply", gloss)]
 
     async def _answer_later(self) -> None:

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "ollama"
     # 연습 목표 단어가 인식 후보 몇 등 안에 들면 맞힌 것으로 볼지
     TARGET_TOPK: int = 10
+    # 프리토킹: 이보다 확신이 낮은 인식은 말로 보지 않는다 (손을 그냥 움직일 때 엉뚱한 단어로 답하는 것 방지)
+    FREE_TALK_WORD_MIN_CONF: float = 0.5
+    FREE_TALK_SENTENCE_MIN_CONF: float = 0.4
     # claude_code: 이 컴퓨터에 로그인된 Claude Code 를 요청마다 실행
     CLAUDE_CODE_PATH: str = ""
     CLAUDE_CODE_MODEL: str = ""
