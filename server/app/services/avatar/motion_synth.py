@@ -23,7 +23,7 @@ import numpy as np
 
 from app.core.config import local_or
 
-from app.services.avatar import hand_limits
+from app.services.avatar import arm_ik, hand_limits
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,8 @@ class MotionSynth:
             {k: tuple(v) for k, v in ref["rot"].items()},
             ref["parent"]))
         self.bones = [m[0] for m in self.retargeter.map]
+        rt = self.retargeter
+        self.arm_ik = arm_ik.ArmIK(ref["pos"], rt.right, rt.fwd, rt.up)
         self.model = ModelGenerator()
         logger.info("수어 동작 생성 모델: %d 단어", len(self.model.vocab))
         # 쉬는 자세: 학습 때 meta 에 저장한 '손을 내린 자세' (단어 영상 첫 프레임들의 중앙값, 좌우 대칭)
@@ -145,6 +147,7 @@ class MotionSynth:
         return self.to_message(self.rest_kp[None], loop=True) if self.rest_kp is not None else None
 
     def to_message(self, kp: np.ndarray, loop: bool = False, loop_gap: float = 0.0) -> dict:
+        kp = arm_ik.apply(kp, JOINTS, self.arm_ik)   # 얼굴 근처 수어는 아바타 얼굴 기준으로 팔을 다시 풂
         kp = hand_limits.apply(kp, JOINTS)   # 사람 손이 못 하는 꺾임 제거
         frames: List[List[float]] = []
         prev: Dict[str, sr.Quat] = {}
