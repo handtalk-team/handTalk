@@ -20,6 +20,7 @@ SOURCES = {          # 모양: (단어, 프레임 고르는 기준)
     "pinky": ("괜찮다", lambda h, s: (np.linalg.norm(h[20] - h[0]) - np.linalg.norm(h[8] - h[0]) - np.linalg.norm(h[12] - h[0])) / s),
     "thumb": ("좋다", lambda h, s: (np.linalg.norm(h[4] - h[17]) * 1.0 - np.linalg.norm(h[8] - h[0]) - np.linalg.norm(h[12] - h[0])) / s),
     "v": ("병원", lambda h, s: (np.linalg.norm(h[8] - h[0]) + np.linalg.norm(h[12] - h[0]) - np.linalg.norm(h[16] - h[0]) - np.linalg.norm(h[20] - h[0])) / s),
+    "fist": ("건강", lambda h, s: -sum(np.linalg.norm(h[t] - h[0]) for t in (8, 12, 16, 20)) / s),
     "l": ("싫다", lambda h, s: (np.linalg.norm(h[4] - h[8]) + np.linalg.norm(h[8] - h[0]) - np.linalg.norm(h[12] - h[0]) - np.linalg.norm(h[16] - h[0])) / s),
 }
 
