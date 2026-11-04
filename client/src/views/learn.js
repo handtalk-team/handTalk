@@ -1,5 +1,6 @@
 import { h, icon } from '../core/dom.js';
 import { state } from '../core/store.js';
+import { splitWords, reveal } from '../core/motion.js';
 
 const INTRO = {
   word: ['단어 연습', '선생님이 먼저 동작을 보여 주면 따라 하세요. 맞히면 다음 단어로 넘어가고, 틀리면 손 모양과 움직임을 짚어 드려요.'],
@@ -10,13 +11,16 @@ const INTRO = {
 export function render(root, { mode = 'word' }) {
   const c = state.curriculum;
   const [title, desc] = INTRO[mode] || INTRO.word;
+  const head = h('h2', title);
   root.append(h('div.container', { style: { gap: '36px' } },
-    h('div.page-head', h('h2', title), h('p', desc)),
+    h('div.page-head', h('span.page-kicker', { dataset: { reveal: '' } }, { word: '01', sentence: '02', free_talk: '03' }[mode] || ''), head, h('p', { dataset: { reveal: '' } }, desc)),
     c?.offline ? h('div.card.card-pad', { style: { background: 'var(--warn-bg)', borderColor: 'transparent' } },
       '서버에 연결되지 않아 기본 과정만 보여요. 설정에서 서버 주소를 확인하세요.') : null,
     h('div.course-grid', mode === 'word' ? c.decks.map(deckRow)
       : mode === 'sentence' ? c.scenarios.map(scenarioRow)
         : c.topics.map(topicRow))));
+  splitWords(head, { step: 90 });
+  return reveal(root, root);
 }
 
 function startBtn(mode, id) {
@@ -25,21 +29,21 @@ function startBtn(mode, id) {
 
 function deckRow(d) {
   const ok = d.words.filter((w) => w.available).length;
-  return h('div.course',
+  return h('div.course', { dataset: { reveal: '' } },
     h('div.title-col', h('h3', d.title), h('span.meta', `단어 ${ok}개${ok < d.words.length ? ` · ${d.words.length - ok}개 준비 중` : ''}`)),
     h('div.body.words', d.words.map((w) => h('span', { dataset: w.available ? {} : { off: '' }, title: w.available ? '' : '인식 모델에 아직 없는 단어' }, w.gloss))),
     h('div.cta', startBtn('word', d.id)));
 }
 
 function scenarioRow(s) {
-  return h('div.course',
+  return h('div.course', { dataset: { reveal: '' } },
     h('div.title-col', h('h3', s.title), h('span.meta', `${s.place} · 대화 ${s.turns.length}번`)),
     h('div.body', h('div', s.goal), h('div.turns', s.turns.slice(0, 2).map((t) => h('div', t.partner)))),
     h('div.cta', startBtn('sentence', s.id)));
 }
 
 function topicRow(t) {
-  return h('div.course',
+  return h('div.course', { dataset: { reveal: '' } },
     h('div.title-col', h('h3', t.title), h('span.meta', '자유 대화')),
     h('div.body', `“${t.opener}”`),
     h('div.cta', startBtn('free_talk', t.id)));
